@@ -1,6 +1,8 @@
 defmodule DllbTest do
   use ExUnit.Case, async: true
 
+  alias Dllb.MetaAST.NodeTypes
+
   describe "Dllb.Query" do
     test "create generates correct SQL" do
       result = Dllb.Query.create("ast_node", %{name: "parse", kind: "function_def"})
@@ -126,58 +128,58 @@ defmodule DllbTest do
 
   describe "Dllb.MetaAST.NodeTypes" do
     test "all returns 45 types" do
-      all = Dllb.MetaAST.NodeTypes.all()
+      all = NodeTypes.all()
       assert length(all) == 45
     end
 
     test "core returns 19 types" do
-      assert length(Dllb.MetaAST.NodeTypes.core()) == 19
+      assert length(NodeTypes.core()) == 19
     end
 
     test "extended returns 14 types" do
-      assert length(Dllb.MetaAST.NodeTypes.extended()) == 14
+      assert length(NodeTypes.extended()) == 14
     end
 
     test "structural returns 11 types" do
-      assert length(Dllb.MetaAST.NodeTypes.structural()) == 11
+      assert length(NodeTypes.structural()) == 11
     end
 
     test "native returns 1 type" do
-      assert [_ | []] = Dllb.MetaAST.NodeTypes.native()
+      assert [_ | []] = NodeTypes.native()
     end
 
     test "valid? accepts all 8 newly-added types" do
-      assert Dllb.MetaAST.NodeTypes.valid?(:throw)
-      assert Dllb.MetaAST.NodeTypes.valid?(:yield)
-      assert Dllb.MetaAST.NodeTypes.valid?(:pipe)
-      assert Dllb.MetaAST.NodeTypes.valid?(:pin)
-      assert Dllb.MetaAST.NodeTypes.valid?(:assert_type)
-      assert Dllb.MetaAST.NodeTypes.valid?(:decorator)
-      assert Dllb.MetaAST.NodeTypes.valid?(:record_update)
-      assert Dllb.MetaAST.NodeTypes.valid?(:child_spec)
+      assert NodeTypes.valid?(:throw)
+      assert NodeTypes.valid?(:yield)
+      assert NodeTypes.valid?(:pipe)
+      assert NodeTypes.valid?(:pin)
+      assert NodeTypes.valid?(:assert_type)
+      assert NodeTypes.valid?(:decorator)
+      assert NodeTypes.valid?(:record_update)
+      assert NodeTypes.valid?(:child_spec)
     end
 
     test "valid? rejects unknown types" do
-      refute Dllb.MetaAST.NodeTypes.valid?(:nonexistent)
-      refute Dllb.MetaAST.NodeTypes.valid?(:foo)
+      refute NodeTypes.valid?(:nonexistent)
+      refute NodeTypes.valid?(:foo)
     end
 
     test "layer returns correct layer for all groups" do
-      assert Dllb.MetaAST.NodeTypes.layer(:literal) == :core
-      assert Dllb.MetaAST.NodeTypes.layer(:throw) == :core
-      assert Dllb.MetaAST.NodeTypes.layer(:loop) == :extended
-      assert Dllb.MetaAST.NodeTypes.layer(:yield) == :extended
-      assert Dllb.MetaAST.NodeTypes.layer(:pipe) == :extended
-      assert Dllb.MetaAST.NodeTypes.layer(:container) == :structural
-      assert Dllb.MetaAST.NodeTypes.layer(:decorator) == :structural
-      assert Dllb.MetaAST.NodeTypes.layer(:child_spec) == :structural
-      assert Dllb.MetaAST.NodeTypes.layer(:language_specific) == :native
+      assert NodeTypes.layer(:literal) == :core
+      assert NodeTypes.layer(:throw) == :core
+      assert NodeTypes.layer(:loop) == :extended
+      assert NodeTypes.layer(:yield) == :extended
+      assert NodeTypes.layer(:pipe) == :extended
+      assert NodeTypes.layer(:container) == :structural
+      assert NodeTypes.layer(:decorator) == :structural
+      assert NodeTypes.layer(:child_spec) == :structural
+      assert NodeTypes.layer(:language_specific) == :native
     end
 
     test "to_dllb_kind and from_dllb_kind round-trip" do
-      for type <- Dllb.MetaAST.NodeTypes.all() do
-        kind = Dllb.MetaAST.NodeTypes.to_dllb_kind(type)
-        assert {:ok, ^type} = Dllb.MetaAST.NodeTypes.from_dllb_kind(kind)
+      for type <- NodeTypes.all() do
+        kind = NodeTypes.to_dllb_kind(type)
+        assert {:ok, ^type} = NodeTypes.from_dllb_kind(kind)
       end
     end
   end
@@ -185,8 +187,7 @@ defmodule DllbTest do
   describe "Dllb.Schema" do
     test "all_statements returns table + index definitions" do
       stmts = Dllb.Schema.all_statements()
-      assert is_list(stmts)
-      assert length(stmts) > 0
+      assert [_ | _] = stmts
 
       joined = Enum.join(stmts, " ")
       assert joined =~ "DEFINE TABLE ast_node"

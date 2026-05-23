@@ -22,3 +22,10 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 dllb-*.tar
 
+# Dialyzer PLT cache
+/.dialyzer/
+
+/.elixir-tools/
+/.elixir_ls/
+/.erl.history/
+/.zed/
