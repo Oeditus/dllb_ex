@@ -51,6 +51,7 @@ defmodule Dllb.MixProject do
   defp deps do
     [
       {:nimble_pool, "~> 1.1"},
+      {:metastatic, "~> 0.22", optional: true},
 
       # Dev / Test
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},

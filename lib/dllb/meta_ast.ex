@@ -166,7 +166,7 @@ defmodule Dllb.MetaAST do
       documents
       |> Enum.reverse()
       |> Enum.map(fn {record_id, fields} ->
-        Query.create_with_id("ast_node", record_id, fields)
+        Query.create_with_id("ast_node", bare_id(record_id), fields)
       end)
 
     relate_queries =
@@ -182,7 +182,7 @@ defmodule Dllb.MetaAST do
   # --- Private functions ---
 
   defp walk_tree({type_atom, meta, children}, context, {docs_acc, edges_acc})
-       when is_list(children) do
+       when is_atom(type_atom) and is_list(children) do
     # Track current module name for child context enrichment
     child_context =
       if type_atom == :container do
@@ -198,24 +198,57 @@ defmodule Dllb.MetaAST do
 
     {docs_acc, edges_acc} =
       Enum.reduce(children, {docs_acc, edges_acc}, fn child, {d_acc, e_acc} ->
-        {child_type, child_meta, _} = child
-        child_id = node_id(child_type, child_meta, child_context)
-
-        e_acc = maybe_add_edge(type_atom, current_id, child_type, child_id, child_meta, e_acc)
-
-        walk_tree(child, child_context, {d_acc, e_acc})
+        walk_child(child, type_atom, current_id, child_context, {d_acc, e_acc})
       end)
 
     {docs_acc, edges_acc}
   end
 
-  defp walk_tree({type_atom, meta, value}, context, {docs_acc, edges_acc}) do
+  # Tuple-typed node (e.g. dynamic call where type is itself a 3-tuple)
+  defp walk_tree({type_tuple, meta, children}, context, acc)
+       when is_tuple(type_tuple) do
+    walk_tree({:language_specific, meta, [{type_tuple, meta, children}]}, context, acc)
+  end
+
+  defp walk_tree({type_atom, meta, value}, context, {docs_acc, edges_acc})
+       when is_atom(type_atom) do
     doc = to_dllb_document({type_atom, meta, value}, context)
     current_id = node_id(type_atom, meta, context)
     {[{current_id, doc} | docs_acc], edges_acc}
   end
 
-  defp node_id(type_atom, meta, context) do
+  # Non-3-tuple values that appear in children lists -- skip
+  defp walk_tree(_other, _context, acc), do: acc
+
+  defp walk_child(
+         {child_type, child_meta, _} = child,
+         parent_type,
+         parent_id,
+         context,
+         {d_acc, e_acc}
+       )
+       when is_atom(child_type) do
+    child_id = node_id(child_type, child_meta, context)
+    e_acc = maybe_add_edge(parent_type, parent_id, child_type, child_id, child_meta, e_acc)
+    walk_tree(child, context, {d_acc, e_acc})
+  end
+
+  # Tuple-typed child node (dynamic/remote call producing non-atom type)
+  defp walk_child(
+         {type_tuple, _meta, _children} = child,
+         _parent_type,
+         _parent_id,
+         context,
+         {d_acc, e_acc}
+       )
+       when is_tuple(type_tuple) do
+    walk_tree(child, context, {d_acc, e_acc})
+  end
+
+  # nil children (e.g. missing else branch) or other non-AST values -- skip
+  defp walk_child(_child, _parent_type, _parent_id, _context, acc), do: acc
+
+  defp node_id(type_atom, meta, context) when is_atom(type_atom) do
     name = Keyword.get(meta, :name, Atom.to_string(type_atom))
     line = Keyword.get(meta, :line, 0)
 
@@ -232,6 +265,9 @@ defmodule Dllb.MetaAST do
 
     "ast_node:#{file_stem}_#{sanitized_name}_#{line}"
   end
+
+  defp bare_id("ast_node:" <> id), do: id
+  defp bare_id(id), do: id
 
   defp maybe_add_edge(:container, parent_id, :function_def, child_id, _child_meta, edges) do
     [{parent_id, "contains", child_id, %{}} | edges]
@@ -252,7 +288,7 @@ defmodule Dllb.MetaAST do
   end
 
   defp collect_edges({type_atom, meta, children}, parent_id, context, acc)
-       when is_list(children) do
+       when is_atom(type_atom) and is_list(children) do
     current_id = node_id(type_atom, meta, context)
 
     acc =
@@ -262,12 +298,17 @@ defmodule Dllb.MetaAST do
         acc
       end
 
-    Enum.reduce(children, acc, fn child, inner_acc ->
-      collect_edges(child, current_id, context, inner_acc)
+    Enum.reduce(children, acc, fn
+      {child_type, _, _} = child, inner_acc when is_atom(child_type) ->
+        collect_edges(child, current_id, context, inner_acc)
+
+      _non_ast_child, inner_acc ->
+        inner_acc
     end)
   end
 
-  defp collect_edges({type_atom, meta, _value}, parent_id, context, acc) do
+  defp collect_edges({type_atom, meta, _value}, parent_id, context, acc)
+       when is_atom(type_atom) do
     current_id = node_id(type_atom, meta, context)
 
     if parent_id do
@@ -276,6 +317,9 @@ defmodule Dllb.MetaAST do
       acc
     end
   end
+
+  # Non-standard nodes (tuple-typed, nil, etc.) -- skip
+  defp collect_edges(_other, _parent_id, _context, acc), do: acc
 
   defp maybe_add_collected_edge(parent_id, :function_def, child_id, _meta, acc) do
     [{parent_id, "contains", child_id, %{}} | acc]
@@ -297,7 +341,7 @@ defmodule Dllb.MetaAST do
     documents
     |> Enum.reverse()
     |> Enum.reduce_while({:ok, 0}, fn {record_id, fields}, {:ok, count} ->
-      query = Query.create_with_id("ast_node", record_id, fields)
+      query = Query.create_with_id("ast_node", bare_id(record_id), fields)
 
       case query_fn.(query) do
         {:ok, _} -> {:cont, {:ok, count + 1}}
