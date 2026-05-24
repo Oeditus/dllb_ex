@@ -21,6 +21,7 @@ defmodule Dllb.MixProject do
       test_coverage: [tool: ExCoveralls],
       dialyzer: [
         plt_file: {:no_warn, ".dialyzer/dialyzer.plt"},
+        plt_add_apps: [:mix],
         plt_add_deps: :app_tree,
         plt_core_path: ".dialyzer",
         list_unused_filters: true
