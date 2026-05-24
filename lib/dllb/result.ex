@@ -18,7 +18,7 @@ defmodule Dllb.Result do
   end
 
   defmodule Created do
-    @moduledoc "Represents a successful creation, carrying the new record's id."
+    @moduledoc "Represents a successful creation or upsert, carrying the record's id."
     defstruct [:id]
     @type t :: %__MODULE__{id: String.t()}
   end
@@ -53,6 +53,10 @@ defmodule Dllb.Result do
   end
 
   def parse(%{"status" => "created", "id" => id}) do
+    {:ok, %Created{id: id}}
+  end
+
+  def parse(%{"status" => "updated", "id" => id}) do
     {:ok, %Created{id: id}}
   end
 
