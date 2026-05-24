@@ -67,6 +67,12 @@ defmodule Dllb.Connection do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     outcome = Keyword.get(opts, :outcome, @default_outcome)
 
+    # Drain any residual data left in the socket buffer from a previous
+    # response that spanned multiple lines (the dllb server may send
+    # multi-line output for certain operations).  Without this, the
+    # next recv would read stale data and produce {:invalid_byte, _}.
+    drain_socket(socket)
+
     with :ok <- :gen_tcp.send(socket, Protocol.encode(query_string)),
          {:ok, line} <- :gen_tcp.recv(socket, 0, timeout),
          {:ok, decoded} <- Protocol.decode(line, outcome),
@@ -95,6 +101,23 @@ defmodule Dllb.Connection do
   end
 
   # -- Private ---------------------------------------------------------------
+
+  # Non-blocking drain: reads and discards any bytes sitting in the socket
+  # receive buffer.  Uses `{active, false}` + 0-byte recv with 0 timeout.
+  defp drain_socket(socket) do
+    # Temporarily switch to raw packet mode so we can read arbitrary bytes
+    :inet.setopts(socket, [{:packet, :raw}])
+    drain_loop(socket)
+    :inet.setopts(socket, [{:packet, :line}])
+  end
+
+  defp drain_loop(socket) do
+    case :gen_tcp.recv(socket, 0, 0) do
+      {:ok, _data} -> drain_loop(socket)
+      {:error, :timeout} -> :ok
+      {:error, _} -> :ok
+    end
+  end
 
   defp resolve_host(host) when is_binary(host), do: String.to_charlist(host)
   defp resolve_host(host) when is_list(host), do: host
