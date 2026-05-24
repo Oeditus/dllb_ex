@@ -245,7 +245,14 @@ defmodule Dllb.Query do
   defp escape_value(v) when is_float(v), do: Float.to_string(v)
 
   defp escape_value(v) when is_binary(v) do
-    escaped = String.replace(v, "'", "''")
+    escaped =
+      v
+      |> String.replace("\\", "\\\\")
+      |> String.replace("'", "''")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\r", "\\r")
+      |> String.replace("\t", "\\t")
+
     "'#{escaped}'"
   end
 

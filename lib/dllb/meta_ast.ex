@@ -141,7 +141,7 @@ defmodule Dllb.MetaAST do
   @spec ingest_tree(meta_ast_node(), context(), query_fn()) ::
           {:ok, %{nodes: non_neg_integer(), edges: non_neg_integer()}} | {:error, any()}
   def ingest_tree(tree, context, query_fn) when is_function(query_fn, 1) do
-    {documents, edges} = walk_tree(tree, context, {[], []})
+    {documents, edges} = walk_tree(tree, context, {[], []}, 0)
 
     with {:ok, node_count} <- execute_creates(documents, context, query_fn),
          {:ok, edge_count} <- execute_relates(edges, query_fn) do
@@ -160,7 +160,7 @@ defmodule Dllb.MetaAST do
   """
   @spec ingest_tree_queries(meta_ast_node(), context()) :: {[String.t()], [String.t()]}
   def ingest_tree_queries(tree, context) do
-    {documents, edges} = walk_tree(tree, context, {[], []})
+    {documents, edges} = walk_tree(tree, context, {[], []}, 0)
 
     create_queries =
       documents
@@ -181,9 +181,12 @@ defmodule Dllb.MetaAST do
 
   # --- Private functions ---
 
-  defp walk_tree({type_atom, meta, children}, context, {docs_acc, edges_acc})
+  @max_depth 50
+
+  defp walk_tree(_node, _context, acc, depth) when depth > @max_depth, do: acc
+
+  defp walk_tree({type_atom, meta, children}, context, {docs_acc, edges_acc}, depth)
        when is_atom(type_atom) and is_list(children) do
-    # Track current module name for child context enrichment
     child_context =
       if type_atom == :container do
         Map.put(context, :module, Keyword.get(meta, :name))
@@ -198,19 +201,22 @@ defmodule Dllb.MetaAST do
 
     {docs_acc, edges_acc} =
       Enum.reduce(children, {docs_acc, edges_acc}, fn child, {d_acc, e_acc} ->
-        walk_child(child, type_atom, current_id, child_context, {d_acc, e_acc})
+        walk_child(child, type_atom, current_id, child_context, {d_acc, e_acc}, depth + 1)
       end)
 
     {docs_acc, edges_acc}
   end
 
-  # Tuple-typed node (e.g. dynamic call where type is itself a 3-tuple)
-  defp walk_tree({type_tuple, meta, children}, context, acc)
+  # Tuple-typed node (e.g. dynamic call where type is itself a 3-tuple).
+  # Promote the original children directly under :language_specific to avoid
+  # re-inserting the tuple-typed node as a child (which would loop forever).
+  defp walk_tree({type_tuple, meta, children}, context, acc, depth)
        when is_tuple(type_tuple) do
-    walk_tree({:language_specific, meta, [{type_tuple, meta, children}]}, context, acc)
+    flat_children = if is_list(children), do: children, else: []
+    walk_tree({:language_specific, meta, flat_children}, context, acc, depth)
   end
 
-  defp walk_tree({type_atom, meta, value}, context, {docs_acc, edges_acc})
+  defp walk_tree({type_atom, meta, value}, context, {docs_acc, edges_acc}, _depth)
        when is_atom(type_atom) do
     doc = to_dllb_document({type_atom, meta, value}, context)
     current_id = node_id(type_atom, meta, context)
@@ -218,19 +224,20 @@ defmodule Dllb.MetaAST do
   end
 
   # Non-3-tuple values that appear in children lists -- skip
-  defp walk_tree(_other, _context, acc), do: acc
+  defp walk_tree(_other, _context, acc, _depth), do: acc
 
   defp walk_child(
          {child_type, child_meta, _} = child,
          parent_type,
          parent_id,
          context,
-         {d_acc, e_acc}
+         {d_acc, e_acc},
+         depth
        )
        when is_atom(child_type) do
     child_id = node_id(child_type, child_meta, context)
     e_acc = maybe_add_edge(parent_type, parent_id, child_type, child_id, child_meta, e_acc)
-    walk_tree(child, context, {d_acc, e_acc})
+    walk_tree(child, context, {d_acc, e_acc}, depth)
   end
 
   # Tuple-typed child node (dynamic/remote call producing non-atom type)
@@ -239,14 +246,15 @@ defmodule Dllb.MetaAST do
          _parent_type,
          _parent_id,
          context,
-         {d_acc, e_acc}
+         {d_acc, e_acc},
+         depth
        )
        when is_tuple(type_tuple) do
-    walk_tree(child, context, {d_acc, e_acc})
+    walk_tree(child, context, {d_acc, e_acc}, depth)
   end
 
   # nil children (e.g. missing else branch) or other non-AST values -- skip
-  defp walk_child(_child, _parent_type, _parent_id, _context, acc), do: acc
+  defp walk_child(_child, _parent_type, _parent_id, _context, acc, _depth), do: acc
 
   defp node_id(type_atom, meta, context) when is_atom(type_atom) do
     name = Keyword.get(meta, :name, Atom.to_string(type_atom))
