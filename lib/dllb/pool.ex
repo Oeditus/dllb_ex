@@ -92,8 +92,11 @@ defmodule Dllb.Pool do
     ]
 
     case Connection.connect(conn_opts) do
-      {:ok, socket} -> {:ok, socket, opts}
-      {:error, reason} -> {:error, reason}
+      {:ok, socket} ->
+        {:ok, socket, opts}
+
+      {:error, reason} ->
+        raise "unexpected return from #{inspect(__MODULE__)}.init_worker/1: #{inspect(reason)}"
     end
   end
 
@@ -104,10 +107,8 @@ defmodule Dllb.Pool do
     else
       Connection.close(socket)
 
-      case init_worker(opts) do
-        {:ok, new_socket, opts} -> {:ok, new_socket, new_socket, opts}
-        {:error, reason} -> {:remove, reason, opts}
-      end
+      {:ok, new_socket, opts} = init_worker(opts)
+      {:ok, new_socket, new_socket, opts}
     end
   end
 

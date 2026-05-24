@@ -7,3 +7,5 @@ config :dllb,
   pool_size: 5,
   outcome: :json,
   timeout: 30_000
+
+import_config "#{config_env()}.exs"
