@@ -76,7 +76,10 @@ defmodule Dllb do
         result
 
       {:error, reason} ->
-        raise Dllb.Error, %{message: "batch query failed: #{inspect(reason)}", type: :connection_error}
+        raise Dllb.Error, %{
+          message: "batch query failed: #{inspect(reason)}",
+          type: :connection_error
+        }
     end)
   end
 end

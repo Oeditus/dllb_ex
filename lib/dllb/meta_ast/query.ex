@@ -171,7 +171,14 @@ defmodule Dllb.MetaAST.Query do
       end
 
     Query.select(@table,
-      fields: ["id", "name", "kind", "file_path", "source_text", "vector::distance::knn() AS score"],
+      fields: [
+        "id",
+        "name",
+        "kind",
+        "file_path",
+        "source_text",
+        "vector::distance::knn() AS score"
+      ],
       where: where_clause,
       order: "score",
       limit: k
@@ -311,7 +318,8 @@ defmodule Dllb.MetaAST.Query do
   @spec exec_delete_by_project(String.t(), MetaAST.query_fn()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def exec_delete_by_project(project_path, query_fn) do
-    select_q = Query.select(@table, fields: ["id"], where: "project_path = #{escape(project_path)}")
+    select_q =
+      Query.select(@table, fields: ["id"], where: "project_path = #{escape(project_path)}")
 
     with {:ok, rows} <- exec_rows(select_q, query_fn) do
       ids = Enum.map(rows, & &1["id"])
