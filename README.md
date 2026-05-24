@@ -1,8 +1,8 @@
 <img src="https://raw.githubusercontent.com/Oeditus/dllb_ex/main/logo-128x128.png" alt="Dllb" width="128" align="right">
 
-# Dllb
+# dllb
 
-**Elixir client for the dllb multi-model NoSQL database**
+**Elixir client for the [`dllb`](https://github.com/Oeditus/dllb) multi-model NoSQL database**
 
 [![Hex.pm](https://img.shields.io/hexpm/v/dllb.svg)](https://hex.pm/packages/dllb)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/dllb)
@@ -15,14 +15,14 @@ on data rather than sockets.
 
 ## Features
 
-- **Connection pooling** -- NimblePool-managed TCP sockets with automatic reconnection on dead connections.
-- **Wire protocol** -- Line-based text over TCP; supports JSON, toon, and CSV response formats.
-- **Query builder** -- Composable functions for CREATE, SELECT, UPDATE, DELETE, RELATE, DEFINE TABLE/FIELD/INDEX statements.
-- **Result structs** -- Typed structs (`Ok`, `Created`, `Deleted`, `Rows`, `Error`) parsed from server responses.
-- **Vector index support** -- HNSW index definitions with configurable dimension and distance metric.
-- **MetaAST bridge** -- Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion.
-- **Schema bootstrap** -- Declarative schema definitions executed through any query function.
-- **OTP-ready** -- Application supervision tree with opt-in pool startup via `config :dllb, enabled: true`.
+- **Connection pooling**—NimblePool-managed TCP sockets with automatic reconnection on dead connections.
+- **Wire protocol**—Line-based text over TCP; supports JSON, toon, and CSV response formats.
+- **Query builder**—Composable functions for CREATE, SELECT, UPDATE, DELETE, RELATE, DEFINE TABLE/FIELD/INDEX statements.
+- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `Rows`, `Error`) parsed from server responses.
+- **Vector index support**—HNSW index definitions with configurable dimension and distance metric.
+- **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion.
+- **Schema bootstrap**—Declarative schema definitions executed through any query function.
+- **OTP-ready**—Application supervision tree with opt-in pool startup via `config :dllb, enabled: true`.
 
 ## Installation
 
@@ -55,11 +55,11 @@ no dllb server is available.
 
 ### Options
 
-- `:host` -- server hostname or IP (default `"127.0.0.1"`)
-- `:port` -- server port (default `3009`)
-- `:pool_size` -- number of persistent TCP connections (default `5`)
-- `:outcome` -- response format: `:json`, `:toon`, or `:csv` (default `:json`)
-- `:timeout` -- connection and receive timeout in milliseconds (default `30_000`)
+- `:host`—server hostname or IP (default `"127.0.0.1"`)
+- `:port`—server port (default `3009`)
+- `:pool_size`—number of persistent TCP connections (default `5`)
+- `:outcome`—response format: `:json`, `:toon`, or `:csv` (default `:json`)
+- `:timeout`—connection and receive timeout in milliseconds (default `30_000`)
 
 ## Usage
 
@@ -99,15 +99,15 @@ context = %{language: :elixir, file_path: "/app/lib/parser.ex"}
 
 ## Modules
 
-- `Dllb` -- top-level query interface (`query/1`, `query!/1`)
-- `Dllb.Connection` -- raw TCP socket operations (connect, query, close, alive?)
-- `Dllb.Pool` -- NimblePool connection pool with dead-socket detection
-- `Dllb.Protocol` -- wire format encoding/decoding (line-based text over TCP)
-- `Dllb.Query` -- query string builder for all dllb statement types
-- `Dllb.Result` -- typed structs for parsed server responses
-- `Dllb.Schema` -- declarative schema bootstrap (DEFINE TABLE/FIELD/INDEX)
-- `Dllb.MetaAST` -- Metastatic AST serialization and bulk ingestion
-- `Dllb.Error` -- exception struct with typed error classification
+- `Dllb`—top-level query interface (`query/1`, `query!/1`)
+- `Dllb.Connection`—raw TCP socket operations (connect, query, close, alive?)
+- `Dllb.Pool`—NimblePool connection pool with dead-socket detection
+- `Dllb.Protocol`—wire format encoding/decoding (line-based text over TCP)
+- `Dllb.Query`—query string builder for all dllb statement types
+- `Dllb.Result`—typed structs for parsed server responses
+- `Dllb.Schema`—declarative schema bootstrap (DEFINE TABLE/FIELD/INDEX)
+- `Dllb.MetaAST`—Metastatic AST serialization and bulk ingestion
+- `Dllb.Error`—exception struct with typed error classification
 
 ## Documentation
 

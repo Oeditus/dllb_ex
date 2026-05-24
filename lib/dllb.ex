@@ -45,4 +45,38 @@ defmodule Dllb do
         raise Dllb.Error, %{message: "query failed: #{inspect(reason)}", type: :connection_error}
     end
   end
+
+  @doc """
+  Executes multiple queries in a single pool checkout.
+
+  Returns a list of `{:ok, result} | {:error, reason}` in the same
+  order as the input queries. This is significantly faster for bulk
+  operations (e.g. AST ingestion) because it amortises the pool
+  checkout overhead.
+  """
+  @spec batch([String.t()]) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
+  def batch(query_strings) when is_list(query_strings) do
+    Dllb.Pool.batch(query_strings)
+  end
+
+  @doc """
+  Like `batch/1` but raises on the first error encountered.
+
+  Returns a list of result structs on success.
+  """
+  @spec batch!([String.t()]) :: [Dllb.Result.t()]
+  def batch!(query_strings) when is_list(query_strings) do
+    query_strings
+    |> Dllb.Pool.batch()
+    |> Enum.map(fn
+      {:ok, %Dllb.Result.Error{message: message}} ->
+        raise Dllb.Error, %{message: message, type: :query_error}
+
+      {:ok, result} ->
+        result
+
+      {:error, reason} ->
+        raise Dllb.Error, %{message: "batch query failed: #{inspect(reason)}", type: :connection_error}
+    end)
+  end
 end

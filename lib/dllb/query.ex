@@ -103,6 +103,23 @@ defmodule Dllb.Query do
   end
 
   @doc """
+  Builds a CREATE ... ON CONFLICT UPDATE statement for idempotent upserts.
+
+  If the record already exists (by table + id), updates the fields instead
+  of failing.
+
+  ## Examples
+
+      iex> Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30})
+      "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE"
+
+  """
+  @spec upsert(String.t(), String.t(), fields()) :: String.t()
+  def upsert(table, id, fields) when is_map(fields) do
+    "CREATE #{table}:#{id} SET #{set_clause(fields)} ON CONFLICT UPDATE"
+  end
+
+  @doc """
   Builds a RELATE statement to create a graph edge between two records.
 
   ## Examples

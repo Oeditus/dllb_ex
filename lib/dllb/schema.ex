@@ -39,13 +39,17 @@ defmodule Dllb.Schema do
   end
 
   @doc """
-  Returns the list of query strings to define the `ast_node` table and its 11 fields.
+  Returns the list of query strings to define the `ast_node` table and its 15 fields.
 
   Fields:
     - `kind` (string, required) - the Metastatic node type
     - `name` (string) - symbol/identifier name
     - `language` (string, required) - source language
     - `file_path` (string, required) - absolute file path
+    - `module` (string) - parent module/container name
+    - `arity` (int) - function arity (for function_def nodes)
+    - `visibility` (string) - "public" or "private"
+    - `project_path` (string) - project root path (multi-project support)
     - `line_start` (int) - starting line number
     - `line_end` (int) - ending line number
     - `source_text` (string) - raw source text
@@ -62,6 +66,10 @@ defmodule Dllb.Schema do
       Query.define_field("ast_node", "name", "string"),
       Query.define_field("ast_node", "language", "string", required: true),
       Query.define_field("ast_node", "file_path", "string", required: true),
+      Query.define_field("ast_node", "module", "string"),
+      Query.define_field("ast_node", "arity", "int"),
+      Query.define_field("ast_node", "visibility", "string"),
+      Query.define_field("ast_node", "project_path", "string"),
       Query.define_field("ast_node", "line_start", "int"),
       Query.define_field("ast_node", "line_end", "int"),
       Query.define_field("ast_node", "source_text", "string"),
@@ -79,6 +87,9 @@ defmodule Dllb.Schema do
     - `idx_kind` - btree on `kind`
     - `idx_language` - btree on `language`
     - `idx_file_path` - btree on `file_path`
+    - `idx_module` - btree on `module`
+    - `idx_project_path` - btree on `project_path`
+    - `idx_file_kind` - btree on `file_path, kind` (composite)
     - `idx_source_embedding` - HNSW 768-dim COSINE on `source_embedding`
     - `idx_structure_embedding` - HNSW 384-dim COSINE on `structure_embedding`
     - `idx_source_text` - fulltext on `source_text`
@@ -90,6 +101,9 @@ defmodule Dllb.Schema do
       Query.define_index("ast_node", "idx_kind", ["kind"], :btree),
       Query.define_index("ast_node", "idx_language", ["language"], :btree),
       Query.define_index("ast_node", "idx_file_path", ["file_path"], :btree),
+      Query.define_index("ast_node", "idx_module", ["module"], :btree),
+      Query.define_index("ast_node", "idx_project_path", ["project_path"], :btree),
+      Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"], :btree),
       Query.define_index("ast_node", "idx_source_embedding", ["source_embedding"], :hnsw,
         dimension: 768,
         dist: "COSINE"

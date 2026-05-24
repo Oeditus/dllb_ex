@@ -12,7 +12,12 @@ defmodule Dllb.MetaAST do
   alias Dllb.Query
 
   @type meta_ast_node :: {atom(), keyword(), list() | term()}
-  @type context :: %{language: atom(), file_path: String.t()}
+  @type context :: %{
+          required(:language) => atom(),
+          required(:file_path) => String.t(),
+          optional(:module) => String.t() | nil,
+          optional(:project_path) => String.t() | nil
+        }
   @type query_fn :: (String.t() -> {:ok, any()} | {:error, any()})
   @type edge :: {String.t(), String.t(), String.t(), map()}
 
@@ -37,11 +42,17 @@ defmodule Dllb.MetaAST do
   """
   @spec to_dllb_document(meta_ast_node(), context()) :: map()
   def to_dllb_document({type_atom, meta, _children_or_value}, context) do
+    params = Keyword.get(meta, :params, [])
+
     %{
       kind: NodeTypes.to_dllb_kind(type_atom),
       name: Keyword.get(meta, :name),
       language: to_string(context.language),
       file_path: context.file_path,
+      module: context[:module],
+      arity: if(type_atom == :function_def, do: length(params)),
+      visibility: visibility_string(Keyword.get(meta, :visibility)),
+      project_path: context[:project_path],
       line_start: Keyword.get(meta, :line),
       line_end: Keyword.get(meta, :end_line),
       source_text: Keyword.get(meta, :source_text),
@@ -105,6 +116,10 @@ defmodule Dllb.MetaAST do
       name: row["name"],
       language: safe_to_atom(row["language"]),
       file_path: row["file_path"],
+      module: row["module"],
+      arity: row["arity"],
+      visibility: safe_to_atom(row["visibility"]),
+      project_path: row["project_path"],
       line_start: row["line_start"],
       line_end: row["line_end"],
       source_text: row["source_text"],
@@ -134,10 +149,48 @@ defmodule Dllb.MetaAST do
     end
   end
 
+  @doc """
+  Like `ingest_tree/3` but collects all queries and returns them as a list
+  of strings suitable for `Dllb.batch/1`.
+
+  This avoids N pool checkouts by letting the caller send all statements
+  in a single batch.
+
+  Returns `{create_queries, relate_queries}` where each is a list of query strings.
+  """
+  @spec ingest_tree_queries(meta_ast_node(), context()) :: {[String.t()], [String.t()]}
+  def ingest_tree_queries(tree, context) do
+    {documents, edges} = walk_tree(tree, context, {[], []})
+
+    create_queries =
+      documents
+      |> Enum.reverse()
+      |> Enum.map(fn {record_id, fields} ->
+        Query.create_with_id("ast_node", record_id, fields)
+      end)
+
+    relate_queries =
+      edges
+      |> Enum.reverse()
+      |> Enum.map(fn {from_id, edge_type, to_id, props} ->
+        Query.relate(from_id, edge_type, to_id, props)
+      end)
+
+    {create_queries, relate_queries}
+  end
+
   # --- Private functions ---
 
   defp walk_tree({type_atom, meta, children}, context, {docs_acc, edges_acc})
        when is_list(children) do
+    # Track current module name for child context enrichment
+    child_context =
+      if type_atom == :container do
+        Map.put(context, :module, Keyword.get(meta, :name))
+      else
+        context
+      end
+
     doc = to_dllb_document({type_atom, meta, children}, context)
     current_id = node_id(type_atom, meta, context)
 
@@ -146,11 +199,11 @@ defmodule Dllb.MetaAST do
     {docs_acc, edges_acc} =
       Enum.reduce(children, {docs_acc, edges_acc}, fn child, {d_acc, e_acc} ->
         {child_type, child_meta, _} = child
-        child_id = node_id(child_type, child_meta, context)
+        child_id = node_id(child_type, child_meta, child_context)
 
         e_acc = maybe_add_edge(type_atom, current_id, child_type, child_id, child_meta, e_acc)
 
-        walk_tree(child, context, {d_acc, e_acc})
+        walk_tree(child, child_context, {d_acc, e_acc})
       end)
 
     {docs_acc, edges_acc}
@@ -274,4 +327,8 @@ defmodule Dllb.MetaAST do
 
   defp safe_to_atom(nil), do: nil
   defp safe_to_atom(str) when is_binary(str), do: String.to_atom(str)
+
+  defp visibility_string(:public), do: "public"
+  defp visibility_string(:private), do: "private"
+  defp visibility_string(_), do: nil
 end

@@ -55,6 +55,31 @@ defmodule Dllb.Pool do
     :exit, reason -> {:error, {:pool_error, reason}}
   end
 
+  @doc """
+  Executes multiple queries through a single pool checkout.
+
+  Checks out one socket, sends all queries sequentially, then checks
+  the socket back in. This amortises the pool checkout cost across
+  many queries (e.g. bulk AST ingestion).
+
+  Returns a list of `{:ok, result} | {:error, reason}` in the same
+  order as the input query strings.
+  """
+  @spec batch([String.t()], Keyword.t()) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
+  def batch(query_strings, opts \\ []) when is_list(query_strings) do
+    NimblePool.checkout!(__MODULE__, :checkout, fn _from, socket ->
+      results =
+        Enum.map(query_strings, fn qs ->
+          Connection.query(socket, qs, opts)
+        end)
+
+      {results, results}
+    end)
+  catch
+    :exit, reason ->
+      Enum.map(query_strings, fn _ -> {:error, {:pool_error, reason}} end)
+  end
+
   # -- NimblePool callbacks --------------------------------------------------
 
   @impl NimblePool
