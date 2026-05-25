@@ -274,9 +274,11 @@ defmodule Dllb.MetaAST.QueryTest do
       {creates, relates} = Dllb.MetaAST.ingest_tree_queries(tree, ctx)
 
       assert [_, _] = creates
-      assert [_] = relates
+      assert [_, _] = relates
       assert Enum.all?(creates, &String.starts_with?(&1, "CREATE"))
-      assert Enum.all?(relates, &String.starts_with?(&1, "RELATE"))
+
+      assert Enum.any?(relates, &String.starts_with?(&1, "RELATE"))
+      assert Enum.any?(relates, &String.starts_with?(&1, "CREATE _edge_idx"))
     end
   end
 end
