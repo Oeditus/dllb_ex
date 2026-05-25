@@ -263,6 +263,18 @@ defmodule Dllb.Query do
     "[#{inner}]"
   end
 
+  defp escape_value(%mod{} = v) do
+    vs =
+      cond do
+        function_exported?(mod, :to_iso8601, 1) -> mod.to_iso8601(v)
+        String.Chars.impl_for(v) -> to_string(v)
+        function_exported?(mod, :to_string, 1) -> mod.to_string(v)
+        true -> inspect(v)
+      end
+
+    escape_value(vs)
+  end
+
   defp escape_value(v) when is_map(v) do
     inner =
       v
@@ -271,6 +283,8 @@ defmodule Dllb.Query do
 
     "{#{inner}}"
   end
+
+  defp escape_value(v) when is_tuple(v), do: escape_value(inspect(v))
 
   defp maybe_append(query, _keyword, nil), do: query
   defp maybe_append(query, _keyword, ""), do: query

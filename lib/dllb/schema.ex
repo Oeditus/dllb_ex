@@ -118,10 +118,23 @@ defmodule Dllb.Schema do
   end
 
   @doc """
+  Returns the list of query strings to define the `_edge_idx` table.
+
+  This schemaless table mirrors graph RELATE edges as queryable documents
+  so that `SELECT * FROM _edge_idx WHERE edge_type = 'calls'` works.
+  """
+  @spec edge_idx_table() :: [String.t()]
+  def edge_idx_table do
+    [
+      Query.define_table("_edge_idx", :schemaless)
+    ]
+  end
+
+  @doc """
   Returns all schema statements (table definitions + index definitions) in order.
   """
   @spec all_statements() :: [String.t()]
   def all_statements do
-    ast_node_table() ++ ast_node_indexes()
+    ast_node_table() ++ ast_node_indexes() ++ edge_idx_table()
   end
 end

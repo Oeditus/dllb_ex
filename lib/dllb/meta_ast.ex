@@ -104,27 +104,29 @@ defmodule Dllb.MetaAST do
   """
   @spec from_dllb_row(map()) :: map()
   def from_dllb_row(row) when is_map(row) do
+    kind_raw = unwrap_typed(row["kind"] || "")
+
     kind =
-      case NodeTypes.from_dllb_kind(row["kind"] || "") do
+      case NodeTypes.from_dllb_kind(kind_raw) do
         {:ok, atom} -> atom
-        :error -> row["kind"]
+        :error -> kind_raw
       end
 
     %{
-      id: row["id"],
+      id: unwrap_typed(row["id"]),
       kind: kind,
-      name: row["name"],
-      language: safe_to_atom(row["language"]),
-      file_path: row["file_path"],
-      module: row["module"],
-      arity: row["arity"],
-      visibility: safe_to_atom(row["visibility"]),
-      project_path: row["project_path"],
-      line_start: row["line_start"],
-      line_end: row["line_end"],
-      source_text: row["source_text"],
-      signature: row["signature"],
-      docstring: row["docstring"],
+      name: unwrap_typed(row["name"]),
+      language: safe_to_atom(unwrap_typed(row["language"])),
+      file_path: unwrap_typed(row["file_path"]),
+      module: unwrap_typed(row["module"]),
+      arity: unwrap_typed(row["arity"]),
+      visibility: safe_to_atom(unwrap_typed(row["visibility"])),
+      project_path: unwrap_typed(row["project_path"]),
+      line_start: unwrap_typed(row["line_start"]),
+      line_end: unwrap_typed(row["line_end"]),
+      source_text: unwrap_typed(row["source_text"]),
+      signature: unwrap_typed(row["signature"]),
+      docstring: unwrap_typed(row["docstring"]),
       source_embedding: row["source_embedding"],
       structure_embedding: row["structure_embedding"]
     }
@@ -169,14 +171,25 @@ defmodule Dllb.MetaAST do
         Query.create_with_id("ast_node", bare_id(record_id), fields)
       end)
 
+    reversed_edges = Enum.reverse(edges)
+
     relate_queries =
-      edges
-      |> Enum.reverse()
-      |> Enum.map(fn {from_id, edge_type, to_id, props} ->
+      Enum.map(reversed_edges, fn {from_id, edge_type, to_id, props} ->
         Query.relate(from_id, edge_type, to_id, props)
       end)
 
-    {create_queries, relate_queries}
+    # Also create queryable index documents for each edge so that
+    # SELECT * FROM _edge_idx WHERE edge_type = 'calls' works.
+    edge_idx_queries =
+      reversed_edges
+      |> Enum.with_index()
+      |> Enum.map(fn {{from_id, edge_type, to_id, _props}, idx} ->
+        edge_id = "#{bare_id(from_id)}_#{edge_type}_#{bare_id(to_id)}_#{idx}"
+        fields = %{from_id: from_id, to_id: to_id, edge_type: edge_type}
+        Query.create_with_id("_edge_idx", edge_id, fields)
+      end)
+
+    {create_queries, relate_queries ++ edge_idx_queries}
   end
 
   # --- Private functions ---
@@ -262,7 +275,7 @@ defmodule Dllb.MetaAST do
 
     sanitized_name =
       name
-      |> to_string()
+      |> safe_to_string()
       |> String.replace(~r/[^a-zA-Z0-9_]/, "_")
 
     file_stem =
@@ -379,6 +392,17 @@ defmodule Dllb.MetaAST do
 
   defp safe_to_atom(nil), do: nil
   defp safe_to_atom(str) when is_binary(str), do: String.to_atom(str)
+
+  # dllb JSON wraps typed values: %{"String" => "value"}, %{"Int" => 42}, etc.
+  defp unwrap_typed(%{"String" => v}), do: v
+  defp unwrap_typed(%{"Int" => v}), do: v
+  defp unwrap_typed(%{"Float" => v}), do: v
+  defp unwrap_typed(%{"Bool" => v}), do: v
+  defp unwrap_typed(v), do: v
+  defp safe_to_string(v) when is_binary(v), do: v
+  defp safe_to_string(v) when is_atom(v), do: Atom.to_string(v)
+  defp safe_to_string(v) when is_number(v), do: to_string(v)
+  defp safe_to_string(v), do: inspect(v)
 
   defp visibility_string(:public), do: "public"
   defp visibility_string(:private), do: "private"

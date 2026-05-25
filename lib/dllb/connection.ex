@@ -74,7 +74,7 @@ defmodule Dllb.Connection do
     drain_socket(socket)
 
     with :ok <- :gen_tcp.send(socket, Protocol.encode(query_string)),
-         {:ok, line} <- :gen_tcp.recv(socket, 0, timeout),
+         {:ok, line} <- recv_full_line(socket, timeout),
          {:ok, decoded} <- Protocol.decode(line, outcome),
          {:ok, result} <- parse_result(decoded, outcome) do
       {:ok, result}
@@ -116,6 +116,28 @@ defmodule Dllb.Connection do
       {:ok, _data} -> drain_loop(socket)
       {:error, :timeout} -> :ok
       {:error, _} -> :ok
+    end
+  end
+
+  # Reads a complete line (terminated by \n) from the socket, accumulating
+  # partial chunks when the response is larger than the internal line buffer.
+  # In {:packet, :line} mode, gen_tcp may return a chunk without a trailing
+  # \n when the full line hasn't arrived yet.
+  defp recv_full_line(socket, timeout) do
+    recv_full_line(socket, timeout, [])
+  end
+
+  defp recv_full_line(socket, timeout, acc) do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, chunk} ->
+        if String.ends_with?(chunk, "\n") do
+          {:ok, IO.iodata_to_binary(Enum.reverse([chunk | acc]))}
+        else
+          recv_full_line(socket, timeout, [chunk | acc])
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
