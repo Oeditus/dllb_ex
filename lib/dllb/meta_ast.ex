@@ -41,16 +41,40 @@ defmodule Dllb.MetaAST do
 
   """
   @spec to_dllb_document(meta_ast_node(), context()) :: map()
-  def to_dllb_document({type_atom, meta, _children_or_value}, context) do
+  def to_dllb_document({type_atom, meta, children_or_value}, context) do
     params = Keyword.get(meta, :params, [])
+    raw_name = Keyword.get(meta, :name)
+
+    # Compute arity for both function_def (from params) and function_call (from args).
+    arity =
+      cond do
+        type_atom == :function_def ->
+          length(params)
+
+        type_atom == :function_call and is_list(children_or_value) ->
+          length(children_or_value)
+
+        true ->
+          nil
+      end
+
+    # For function_call, the name may be qualified ("Module.func").
+    # Extract the callee module so every function node has a proper module field.
+    # For local (unqualified) calls, fall back to the enclosing module from context.
+    {module, name} =
+      if type_atom == :function_call and is_binary(raw_name) do
+        split_qualified_name(raw_name, context[:module])
+      else
+        {context[:module], raw_name}
+      end
 
     %{
       kind: NodeTypes.to_dllb_kind(type_atom),
-      name: Keyword.get(meta, :name),
+      name: name,
       language: to_string(context.language),
       file_path: context.file_path,
-      module: context[:module],
-      arity: if(type_atom == :function_def, do: length(params)),
+      module: module,
+      arity: arity,
       visibility: visibility_string(Keyword.get(meta, :visibility)),
       project_path: context[:project_path],
       line_start: Keyword.get(meta, :line),
@@ -60,6 +84,20 @@ defmodule Dllb.MetaAST do
       docstring: Keyword.get(meta, :doc)
     }
     |> reject_nil_values()
+  end
+
+  # Splits a potentially qualified name like "GenServer.call" into {module, func}.
+  # For unqualified names like "handle_response", returns {fallback_module, name}.
+  defp split_qualified_name(name, fallback_module) do
+    case String.split(name, ".") do
+      parts when length(parts) >= 2 ->
+        func = List.last(parts)
+        mod = parts |> Enum.drop(-1) |> Enum.join(".")
+        {mod, func}
+
+      _ ->
+        {fallback_module, name}
+    end
   end
 
   @doc """
