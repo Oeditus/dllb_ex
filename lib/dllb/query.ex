@@ -217,6 +217,42 @@ defmodule Dllb.Query do
   end
 
   @doc """
+  Builds a `GRAPH COMMUNITIES` statement for native community detection.
+
+  Delegates computation to the dllb engine (Rust Louvain / Label Propagation),
+  which runs in O(E) per iteration — orders of magnitude faster than the
+  equivalent pure-Elixir implementation on large graphs.
+
+  ## Options
+
+    * `:algorithm` - `:louvain` (default) or `:lp` (label propagation)
+    * `:max_iter`  - maximum optimisation passes (default: 10)
+    * `:resolution` - Louvain resolution γ; values < 1.0 → fewer, larger
+      communities; > 1.0 → more, smaller communities (default: 1.0)
+
+  ## Examples
+
+      iex> Dllb.Query.graph_communities("calls")
+      "GRAPH COMMUNITIES calls"
+
+      iex> Dllb.Query.graph_communities("calls", algorithm: :lp, max_iter: 20)
+      "GRAPH COMMUNITIES calls ALGORITHM lp MAX_ITER 20"
+
+      iex> Dllb.Query.graph_communities("calls", algorithm: :louvain, resolution: 0.5)
+      "GRAPH COMMUNITIES calls ALGORITHM louvain RESOLUTION 0.5"
+
+  """
+  @spec graph_communities(String.t(), keyword()) :: String.t()
+  def graph_communities(edge_table, opts \\ []) do
+    base = "GRAPH COMMUNITIES #{edge_table}"
+
+    base
+    |> maybe_append_algorithm(Keyword.get(opts, :algorithm))
+    |> maybe_append_int("MAX_ITER", Keyword.get(opts, :max_iter))
+    |> maybe_append_resolution(Keyword.get(opts, :resolution))
+  end
+
+  @doc """
   Passes through a raw query string without modification.
 
   ## Examples
@@ -292,4 +328,19 @@ defmodule Dllb.Query do
 
   defp maybe_append_limit(query, nil), do: query
   defp maybe_append_limit(query, limit) when is_integer(limit), do: "#{query} LIMIT #{limit}"
+
+  defp maybe_append_algorithm(query, nil), do: query
+  defp maybe_append_algorithm(query, :louvain), do: "#{query} ALGORITHM louvain"
+  defp maybe_append_algorithm(query, :lp), do: "#{query} ALGORITHM lp"
+
+  defp maybe_append_algorithm(query, algo) when is_atom(algo),
+    do: "#{query} ALGORITHM #{Atom.to_string(algo)}"
+
+  defp maybe_append_int(query, _kw, nil), do: query
+  defp maybe_append_int(query, kw, n) when is_integer(n) and n > 0, do: "#{query} #{kw} #{n}"
+  defp maybe_append_int(query, _kw, _), do: query
+
+  defp maybe_append_resolution(query, nil), do: query
+  defp maybe_append_resolution(query, r) when is_float(r), do: "#{query} RESOLUTION #{r}"
+  defp maybe_append_resolution(query, r) when is_integer(r), do: "#{query} RESOLUTION #{r}.0"
 end

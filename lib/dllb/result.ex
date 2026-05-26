@@ -41,7 +41,43 @@ defmodule Dllb.Result do
     @type t :: %__MODULE__{message: String.t()}
   end
 
-  @type t :: Ok.t() | Created.t() | Deleted.t() | Rows.t() | Error.t()
+  defmodule Batch do
+    @moduledoc "Represents the result of a `BEGIN BATCH ... END BATCH` block."
+    defstruct [:count, :created, :updated]
+
+    @type t :: %__MODULE__{
+            count: non_neg_integer(),
+            created: non_neg_integer(),
+            updated: non_neg_integer()
+          }
+  end
+
+  defmodule Communities do
+    @moduledoc """
+    Represents the result of a `GRAPH COMMUNITIES` query.
+
+    Each entry in `data` is a map with three keys (values are serde-tagged):
+      - `"id"` — community representative node ID (e.g. `%{"String" => "node_id"}`)
+      - `"size"` — number of members (e.g. `%{"Int" => 5}`)
+      - `"members"` — list of member IDs (e.g. `%{"Array" => [%{"String" => "n1"}, ...]}`)}
+    """
+    defstruct [:algorithm, :community_count, :data]
+
+    @type t :: %__MODULE__{
+            algorithm: String.t(),
+            community_count: non_neg_integer(),
+            data: [map()]
+          }
+  end
+
+  @type t ::
+          Ok.t()
+          | Created.t()
+          | Deleted.t()
+          | Rows.t()
+          | Error.t()
+          | Batch.t()
+          | Communities.t()
 
   @doc """
   Converts a decoded JSON map (from `Dllb.Protocol.decode/2`) into the
@@ -70,6 +106,19 @@ defmodule Dllb.Result do
 
   def parse(%{"status" => "error", "message" => message}) do
     {:ok, %Error{message: message}}
+  end
+
+  def parse(%{"status" => "batch", "count" => count, "created" => created, "updated" => updated}) do
+    {:ok, %Batch{count: count, created: created, updated: updated}}
+  end
+
+  def parse(%{
+        "status" => "communities",
+        "algorithm" => algorithm,
+        "community_count" => community_count,
+        "data" => data
+      }) do
+    {:ok, %Communities{algorithm: algorithm, community_count: community_count, data: data}}
   end
 
   def parse(other) do

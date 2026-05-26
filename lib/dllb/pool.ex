@@ -80,6 +80,24 @@ defmodule Dllb.Pool do
       Enum.map(query_strings, fn _ -> {:error, {:pool_error, reason}} end)
   end
 
+  @doc """
+  Executes multiple queries inside a `BEGIN BATCH ... END BATCH` block
+  through a single pool checkout.
+
+  All statements run in one server-side storage transaction. Returns a
+  single `{:ok, result}` or `{:error, reason}`.
+  """
+  @spec batch_transaction([String.t()], Keyword.t()) ::
+          {:ok, Dllb.Result.t()} | {:error, term()}
+  def batch_transaction(query_strings, opts \\ []) when is_list(query_strings) do
+    NimblePool.checkout!(__MODULE__, :checkout, fn _from, socket ->
+      result = Connection.batch_transaction(socket, query_strings, opts)
+      {result, result}
+    end)
+  catch
+    :exit, reason -> {:error, {:pool_error, reason}}
+  end
+
   # -- NimblePool callbacks --------------------------------------------------
 
   @impl NimblePool

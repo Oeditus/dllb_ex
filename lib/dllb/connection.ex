@@ -84,6 +84,45 @@ defmodule Dllb.Connection do
   end
 
   @doc """
+  Sends multiple queries wrapped in a `BEGIN BATCH ... END BATCH` block
+  and returns the single aggregated result.
+
+  All statements execute in a single server-side storage transaction,
+  eliminating per-statement write-commit overhead.
+
+  ## Options
+
+    * `:timeout` - recv timeout in ms (default `30_000`)
+    * `:outcome` - response format (default `:json`)
+
+  Returns `{:ok, result}` or `{:error, reason}`.
+  """
+  @spec batch_transaction(:gen_tcp.socket(), [String.t()], Keyword.t()) ::
+          {:ok, Result.t()} | {:error, term()}
+  def batch_transaction(socket, query_strings, opts \\ []) when is_list(query_strings) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
+    outcome = Keyword.get(opts, :outcome, @default_outcome)
+
+    drain_socket(socket)
+
+    payload =
+      IO.iodata_to_binary([
+        "BEGIN BATCH\n",
+        Enum.map(query_strings, &[&1, "\n"]),
+        "END BATCH\n"
+      ])
+
+    with :ok <- :gen_tcp.send(socket, payload),
+         {:ok, line} <- recv_full_line(socket, timeout),
+         {:ok, decoded} <- Protocol.decode(line, outcome),
+         {:ok, result} <- parse_result(decoded, outcome) do
+      {:ok, result}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
   Closes the TCP socket.
   """
   @spec close(:gen_tcp.socket()) :: :ok

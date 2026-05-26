@@ -270,36 +270,22 @@ defmodule Mix.Tasks.Dllb.Ingest do
       end
 
       upserts = Enum.map(creates, &(&1 <> " ON CONFLICT UPDATE"))
-      {node_ok, node_err} = execute_batched(upserts, config.batch_size)
-      {edge_ok, edge_err} = execute_batched(relates, config.batch_size)
-      total_err = node_err + edge_err
+      all_queries = upserts ++ relates
 
-      if total_err > 0 do
-        Mix.shell().error("  #{total_err} query error(s)")
+      case Dllb.batch_transaction(all_queries) do
+        {:ok, %Dllb.Result.Batch{created: created, updated: updated}} ->
+          {:ok, created + updated, length(relates)}
+
+        {:ok, %Dllb.Result.Error{message: msg}} ->
+          Mix.shell().error("  Batch error: #{msg}")
+          {:error, {:batch_error, msg}}
+
+        {:error, reason} ->
+          {:error, reason}
       end
-
-      {:ok, node_ok, edge_ok}
     end
   rescue
     e -> {:error, {:exception, Exception.message(e)}}
-  end
-
-  defp execute_batched(queries, batch_size) do
-    queries
-    |> Enum.chunk_every(batch_size)
-    |> Enum.reduce({0, 0}, fn chunk, {ok_acc, err_acc} ->
-      results = Dllb.batch(chunk)
-
-      ok =
-        Enum.count(results, fn
-          {:ok, %Dllb.Result.Error{}} -> false
-          {:ok, _} -> true
-          _ -> false
-        end)
-
-      errs = length(results) - ok
-      {ok_acc + ok, err_acc + errs}
-    end)
   end
 
   # -- Output ----------------------------------------------------------------

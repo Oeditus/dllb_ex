@@ -60,6 +60,21 @@ defmodule Dllb do
   end
 
   @doc """
+  Executes multiple queries inside a `BEGIN BATCH ... END BATCH` block.
+
+  All statements run in a single server-side storage transaction,
+  eliminating per-statement write-commit overhead. Returns a single
+  result (not a list).
+
+  This is dramatically faster than `batch/1` for bulk writes because
+  the server commits only once instead of once per statement.
+  """
+  @spec batch_transaction([String.t()]) :: {:ok, Dllb.Result.t()} | {:error, term()}
+  def batch_transaction(query_strings) when is_list(query_strings) do
+    Dllb.Pool.batch_transaction(query_strings)
+  end
+
+  @doc """
   Like `batch/1` but raises on the first error encountered.
 
   Returns a list of result structs on success.
