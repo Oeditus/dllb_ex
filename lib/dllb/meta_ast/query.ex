@@ -364,6 +364,62 @@ defmodule Dllb.MetaAST.Query do
   end
 
   # ---------------------------------------------------------------------------
+  # Embeddings
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Builds an `UPDATE ast_node SET source_embedding = [...] WHERE <attrs>`
+  statement that attaches an embedding to the row(s) identified by `attrs`.
+
+  `attrs` is a map of column => value (e.g. `%{kind: "function_def",
+  module: "Foo", name: "bar", arity: 2}`). `nil` values are dropped and the
+  remaining columns are ANDed together (sorted for determinism). Targeting by
+  stable attributes avoids reconstructing synthetic record IDs.
+  """
+  @spec set_source_embedding(map(), [number()]) :: String.t()
+  def set_source_embedding(attrs, embedding) when is_map(attrs) and is_list(embedding) do
+    where =
+      attrs
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Enum.sort_by(fn {k, _v} -> to_string(k) end)
+      |> Enum.map_join(" AND ", fn {k, v} -> "#{k} = #{escape_attr(v)}" end)
+
+    Query.update_where(@table, %{source_embedding: embedding}, where)
+  end
+
+  @doc """
+  Returns a `COUNT` query for `ast_node` rows that have a `source_embedding`
+  set -- i.e. the number of stored embedding vectors.
+  """
+  @spec count_embeddings_query() :: String.t()
+  def count_embeddings_query do
+    Query.count(@table, where: "source_embedding IS NOT NONE")
+  end
+
+  @doc """
+  Executes a `COUNT` query and returns `{:ok, count}` or `{:error, reason}`.
+  """
+  @spec exec_count(String.t(), MetaAST.query_fn()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def exec_count(query_string, query_fn) do
+    case query_fn.(query_string) do
+      {:ok, %Dllb.Result.Count{count: count}} -> {:ok, count}
+      {:ok, %Dllb.Result.Error{message: msg}} -> {:error, {:query_error, msg}}
+      {:ok, other} -> {:error, {:unexpected_result, other}}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Counts stored embedding vectors (`ast_node` rows with `source_embedding`).
+  """
+  @spec exec_count_embeddings(MetaAST.query_fn()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def exec_count_embeddings(query_fn) do
+    exec_count(count_embeddings_query(), query_fn)
+  end
+
+  # ---------------------------------------------------------------------------
   # Tree reconstruction
   # ---------------------------------------------------------------------------
 
@@ -411,6 +467,12 @@ defmodule Dllb.MetaAST.Query do
     escaped = String.replace(value, "'", "''")
     "'#{escaped}'"
   end
+
+  # Escapes a WHERE-clause value: integers stay bare, everything else is
+  # treated as a quoted string.
+  defp escape_attr(value) when is_integer(value), do: Integer.to_string(value)
+  defp escape_attr(value) when is_binary(value), do: escape(value)
+  defp escape_attr(value), do: escape(to_string(value))
 
   defp maybe_add_filter(filters, key, opts) do
     case Keyword.get(opts, key) do

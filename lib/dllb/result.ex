@@ -70,6 +70,32 @@ defmodule Dllb.Result do
           }
   end
 
+  defmodule Count do
+    @moduledoc "Represents the result of a `COUNT` query."
+    defstruct [:count]
+    @type t :: %__MODULE__{count: non_neg_integer()}
+  end
+
+  defmodule Update do
+    @moduledoc "Represents the result of an `UPDATE` statement (rows matched)."
+    defstruct [:matched]
+    @type t :: %__MODULE__{matched: non_neg_integer()}
+  end
+
+  defmodule Components do
+    @moduledoc """
+    Represents the result of a `GRAPH COMPONENTS` query: a compact
+    connected-components summary (no per-component membership).
+    """
+    defstruct [:component_count, :largest, :nodes]
+
+    @type t :: %__MODULE__{
+            component_count: non_neg_integer(),
+            largest: non_neg_integer(),
+            nodes: non_neg_integer()
+          }
+  end
+
   @type t ::
           Ok.t()
           | Created.t()
@@ -78,6 +104,9 @@ defmodule Dllb.Result do
           | Error.t()
           | Batch.t()
           | Communities.t()
+          | Count.t()
+          | Update.t()
+          | Components.t()
 
   @doc """
   Converts a decoded JSON map (from `Dllb.Protocol.decode/2`) into the
@@ -119,6 +148,23 @@ defmodule Dllb.Result do
         "data" => data
       }) do
     {:ok, %Communities{algorithm: algorithm, community_count: community_count, data: data}}
+  end
+
+  def parse(%{"status" => "count", "count" => count}) do
+    {:ok, %Count{count: count}}
+  end
+
+  def parse(%{"status" => "update", "matched" => matched}) do
+    {:ok, %Update{matched: matched}}
+  end
+
+  def parse(%{
+        "status" => "components",
+        "component_count" => component_count,
+        "largest" => largest,
+        "nodes" => nodes
+      }) do
+    {:ok, %Components{component_count: component_count, largest: largest, nodes: nodes}}
   end
 
   def parse(other) do

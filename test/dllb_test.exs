@@ -46,6 +46,31 @@ defmodule DllbTest do
       assert result =~ "name = 'new_name'"
     end
 
+    test "update_where generates UPDATE ... WHERE" do
+      result =
+        Dllb.Query.update_where(
+          "ast_node",
+          %{source_embedding: [0.1, 0.2]},
+          "kind = 'function_def'"
+        )
+
+      assert result =~ "UPDATE ast_node SET source_embedding = [0.1, 0.2]"
+      assert result =~ "WHERE kind = 'function_def'"
+    end
+
+    test "count without where" do
+      assert Dllb.Query.count("ast_node") == "COUNT ast_node"
+    end
+
+    test "count with where" do
+      assert Dllb.Query.count("ast_node", where: "source_embedding IS NOT NONE") ==
+               "COUNT ast_node WHERE source_embedding IS NOT NONE"
+    end
+
+    test "graph_components generates statement" do
+      assert Dllb.Query.graph_components("calls") == "GRAPH COMPONENTS calls"
+    end
+
     test "delete generates correct SQL" do
       assert Dllb.Query.delete("ast_node:fn_1") == "DELETE ast_node:fn_1"
     end
@@ -123,6 +148,26 @@ defmodule DllbTest do
     test "parses error status" do
       assert {:ok, %Dllb.Result.Error{message: "bad query"}} =
                Dllb.Result.parse(%{"status" => "error", "message" => "bad query"})
+    end
+
+    test "parses count status" do
+      assert {:ok, %Dllb.Result.Count{count: 42}} =
+               Dllb.Result.parse(%{"status" => "count", "count" => 42})
+    end
+
+    test "parses update status" do
+      assert {:ok, %Dllb.Result.Update{matched: 3}} =
+               Dllb.Result.parse(%{"status" => "update", "matched" => 3})
+    end
+
+    test "parses components status" do
+      assert {:ok, %Dllb.Result.Components{component_count: 2, largest: 5, nodes: 8}} =
+               Dllb.Result.parse(%{
+                 "status" => "components",
+                 "component_count" => 2,
+                 "largest" => 5,
+                 "nodes" => 8
+               })
     end
   end
 

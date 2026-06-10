@@ -89,6 +89,56 @@ defmodule Dllb.Query do
   end
 
   @doc """
+  Builds an `UPDATE <table> SET ... WHERE <clause>` statement that updates
+  every row matching the (already-built) WHERE clause.
+
+  Only the listed fields are changed (partial-update semantics). An empty
+  WHERE string updates all rows in the table.
+
+  ## Examples
+
+      iex> Dllb.Query.update_where("ast_node", %{arity: 1}, "kind = 'function_def'")
+      "UPDATE ast_node SET arity = 1 WHERE kind = 'function_def'"
+
+  """
+  @spec update_where(String.t(), fields(), String.t()) :: String.t()
+  def update_where(table, fields, where) when is_map(fields) and is_binary(where) do
+    base = "UPDATE #{table} SET #{set_clause(fields)}"
+
+    case String.trim(where) do
+      "" -> base
+      clause -> "#{base} WHERE #{clause}"
+    end
+  end
+
+  @doc """
+  Builds a `COUNT <table> [WHERE <clause>]` statement.
+
+  ## Options
+
+    * `:where` - optional WHERE clause string
+
+  ## Examples
+
+      iex> Dllb.Query.count("user")
+      "COUNT user"
+
+      iex> Dllb.Query.count("user", where: "age = 30")
+      "COUNT user WHERE age = 30"
+
+  """
+  @spec count(String.t(), keyword()) :: String.t()
+  def count(table, opts \\ []) do
+    base = "COUNT #{table}"
+
+    case Keyword.get(opts, :where) do
+      nil -> base
+      "" -> base
+      where -> "#{base} WHERE #{where}"
+    end
+  end
+
+  @doc """
   Builds a DELETE statement for a record.
 
   ## Examples
@@ -250,6 +300,25 @@ defmodule Dllb.Query do
     |> maybe_append_algorithm(Keyword.get(opts, :algorithm))
     |> maybe_append_int("MAX_ITER", Keyword.get(opts, :max_iter))
     |> maybe_append_resolution(Keyword.get(opts, :resolution))
+  end
+
+  @doc """
+  Builds a `GRAPH COMPONENTS <edge_table>` statement for native connected-
+  components detection.
+
+  Delegates computation to the dllb engine (Rust union-find over the edge
+  table, treated as undirected). The server returns a compact summary
+  (`component_count`, `largest`, `nodes`) rather than full membership.
+
+  ## Examples
+
+      iex> Dllb.Query.graph_components("calls")
+      "GRAPH COMPONENTS calls"
+
+  """
+  @spec graph_components(String.t()) :: String.t()
+  def graph_components(edge_table) do
+    "GRAPH COMPONENTS #{edge_table}"
   end
 
   @doc """

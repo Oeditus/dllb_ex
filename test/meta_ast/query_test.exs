@@ -174,6 +174,63 @@ defmodule Dllb.MetaAST.QueryTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Embeddings
+  # ---------------------------------------------------------------------------
+
+  describe "set_source_embedding/2" do
+    test "builds UPDATE ... WHERE targeting by attributes" do
+      q =
+        Query.set_source_embedding(
+          %{kind: "function_def", module: "MyApp", name: "parse", arity: 2},
+          [0.1, 0.2]
+        )
+
+      assert q =~ "UPDATE ast_node SET source_embedding = [0.1, 0.2]"
+      assert q =~ "kind = 'function_def'"
+      assert q =~ "module = 'MyApp'"
+      assert q =~ "name = 'parse'"
+      assert q =~ "arity = 2"
+    end
+
+    test "drops nil attributes" do
+      q = Query.set_source_embedding(%{kind: "container", name: "MyApp", module: nil}, [0.5])
+      assert q =~ "kind = 'container'"
+      assert q =~ "name = 'MyApp'"
+      refute q =~ "module"
+    end
+  end
+
+  describe "count_embeddings_query/0" do
+    test "counts rows with a source_embedding set" do
+      assert Query.count_embeddings_query() ==
+               "COUNT ast_node WHERE source_embedding IS NOT NONE"
+    end
+  end
+
+  describe "exec_count/2" do
+    test "returns the count from a Count result" do
+      fun = fn _q -> {:ok, %Dllb.Result.Count{count: 7}} end
+      assert {:ok, 7} = Query.exec_count("COUNT ast_node", fun)
+    end
+
+    test "propagates query errors" do
+      fun = fn _q -> {:ok, %Dllb.Result.Error{message: "boom"}} end
+      assert {:error, {:query_error, "boom"}} = Query.exec_count("COUNT ast_node", fun)
+    end
+  end
+
+  describe "exec_count_embeddings/1" do
+    test "runs the embeddings count query" do
+      fun = fn q ->
+        assert q == "COUNT ast_node WHERE source_embedding IS NOT NONE"
+        {:ok, %Dllb.Result.Count{count: 3}}
+      end
+
+      assert {:ok, 3} = Query.exec_count_embeddings(fun)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Schema / MetaAST enhancements
   # ---------------------------------------------------------------------------
 
