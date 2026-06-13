@@ -149,6 +149,82 @@ defmodule DllbTest do
                "VECTOR SEARCH doc embedding [1, 2, 3] K 5"
     end
 
+    test "search appends WHERE before LIMIT" do
+      assert Dllb.Query.search("ast_node", "source_text", "parse",
+               where: "kind = 'function_def'",
+               limit: 5
+             ) ==
+               "SEARCH ast_node source_text 'parse' WHERE kind = 'function_def' LIMIT 5"
+    end
+
+    test "vector_search appends WHERE before K" do
+      assert Dllb.Query.vector_search("ast_node", "source_embedding", [0.1, 0.2],
+               where: "project_path = '/p'",
+               k: 5
+             ) ==
+               "VECTOR SEARCH ast_node source_embedding [0.1, 0.2] WHERE project_path = '/p' K 5"
+    end
+
+    test "count with group_by builds GROUP BY" do
+      assert Dllb.Query.count("ast_node", group_by: "kind") == "COUNT ast_node GROUP BY kind"
+    end
+
+    test "count with where and group_by" do
+      assert Dllb.Query.count("ast_node", where: "language = 'elixir'", group_by: "kind") ==
+               "COUNT ast_node WHERE language = 'elixir' GROUP BY kind"
+    end
+
+    test "delete_where without clause deletes the whole table" do
+      assert Dllb.Query.delete_where("ast_node") == "DELETE ast_node"
+    end
+
+    test "delete_where appends WHERE" do
+      assert Dllb.Query.delete_where("ast_node", "file_path = '/a.ex'") ==
+               "DELETE ast_node WHERE file_path = '/a.ex'"
+    end
+
+    test "hybrid_search builds TEXT + VECTOR statement" do
+      assert Dllb.Query.hybrid_search("doc", "body", "graph db", "embedding", [0.1, 0.2]) ==
+               "HYBRID SEARCH doc TEXT body 'graph db' VECTOR embedding [0.1, 0.2]"
+    end
+
+    test "hybrid_search appends ALPHA, WHERE, and LIMIT" do
+      assert Dllb.Query.hybrid_search("doc", "body", "graph", "embedding", [0.1, 0.2],
+               alpha: 0.7,
+               where: "lang = 'en'",
+               limit: 5
+             ) ==
+               "HYBRID SEARCH doc TEXT body 'graph' VECTOR embedding [0.1, 0.2] ALPHA 0.7 WHERE lang = 'en' LIMIT 5"
+    end
+
+    test "graph_pagerank builds statement with options" do
+      assert Dllb.Query.graph_pagerank("calls") == "GRAPH PAGERANK calls"
+
+      assert Dllb.Query.graph_pagerank("calls", damping: 0.9, max_iter: 50, limit: 10) ==
+               "GRAPH PAGERANK calls DAMPING 0.9 MAX_ITER 50 LIMIT 10"
+    end
+
+    test "graph_centrality builds statement with mode and limit" do
+      assert Dllb.Query.graph_centrality("calls") == "GRAPH CENTRALITY calls"
+
+      assert Dllb.Query.graph_centrality("calls", mode: :indegree, limit: 10) ==
+               "GRAPH CENTRALITY calls INDEGREE LIMIT 10"
+    end
+
+    test "graph_path builds directed path statement" do
+      assert Dllb.Query.graph_path("a", "b", "calls") == "GRAPH PATH a -> b ON calls"
+
+      assert Dllb.Query.graph_path("a", "b", "calls", max_depth: 4) ==
+               "GRAPH PATH a -> b ON calls MAX_DEPTH 4"
+    end
+
+    test "graph_edges builds edge listing with optional WHERE" do
+      assert Dllb.Query.graph_edges("calls") == "GRAPH EDGES calls"
+
+      assert Dllb.Query.graph_edges("calls", where: "weight > 0.5") ==
+               "GRAPH EDGES calls WHERE weight > 0.5"
+    end
+
     test "raw passthrough" do
       assert Dllb.Query.raw("SELECT * FROM foo") == "SELECT * FROM foo"
     end
@@ -203,6 +279,11 @@ defmodule DllbTest do
     test "parses deleted status" do
       assert {:ok, %Dllb.Result.Deleted{existed: true}} =
                Dllb.Result.parse(%{"status" => "deleted", "existed" => true})
+    end
+
+    test "parses deleted_many status" do
+      assert {:ok, %Dllb.Result.DeletedMany{count: 7}} =
+               Dllb.Result.parse(%{"status" => "deleted_many", "count" => 7})
     end
 
     test "parses rows status" do

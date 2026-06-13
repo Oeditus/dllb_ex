@@ -2,10 +2,13 @@ defmodule Dllb.Query do
   @moduledoc """
   Query builder that generates dllb SQL strings.
 
-  Provides functions to construct CREATE, SELECT, UPDATE, DELETE, RELATE,
-  COUNT, DEFINE (secondary, full-text, and vector index), REMOVE INDEX, and
-  SEARCH / VECTOR SEARCH statements for the dllb query language. All functions
-  return plain query strings ready to be sent over the wire.
+  Provides functions to construct CREATE, SELECT (with ORDER BY), UPDATE,
+  DELETE (point and `DELETE ... WHERE`), RELATE, COUNT (with GROUP BY),
+  DEFINE (secondary, full-text, and vector index), REMOVE INDEX, SEARCH /
+  VECTOR SEARCH / HYBRID SEARCH (with optional WHERE scoping), and the graph
+  analytics verbs (COMMUNITIES, COMPONENTS, PAGERANK, CENTRALITY, PATH, EDGES)
+  for the dllb query language. All functions return plain query strings ready
+  to be sent over the wire.
   """
 
   @type fields :: %{optional(atom()) => term()}
@@ -113,11 +116,17 @@ defmodule Dllb.Query do
   end
 
   @doc """
-  Builds a `COUNT <table> [WHERE <clause>]` statement.
+  Builds a `COUNT <table> [WHERE <clause>] [GROUP BY <field>]` statement.
+
+  Without `:group_by` the engine returns a single total count. With
+  `:group_by`, it returns one row per distinct value of the field, each with a
+  `count`, sorted by count descending (a `Dllb.Result.Rows`, not a
+  `Dllb.Result.Count`).
 
   ## Options
 
     * `:where` - optional WHERE clause string
+    * `:group_by` - optional field name to group counts by
 
   ## Examples
 
@@ -127,20 +136,19 @@ defmodule Dllb.Query do
       iex> Dllb.Query.count("user", where: "age = 30")
       "COUNT user WHERE age = 30"
 
+      iex> Dllb.Query.count("ast_node", group_by: "kind")
+      "COUNT ast_node GROUP BY kind"
+
   """
   @spec count(String.t(), keyword()) :: String.t()
   def count(table, opts \\ []) do
-    base = "COUNT #{table}"
-
-    case Keyword.get(opts, :where) do
-      nil -> base
-      "" -> base
-      where -> "#{base} WHERE #{where}"
-    end
+    "COUNT #{table}"
+    |> maybe_append("WHERE", Keyword.get(opts, :where))
+    |> maybe_append("GROUP BY", Keyword.get(opts, :group_by))
   end
 
   @doc """
-  Builds a DELETE statement for a record.
+  Builds a DELETE statement for a single record.
 
   ## Examples
 
@@ -151,6 +159,28 @@ defmodule Dllb.Query do
   @spec delete(String.t()) :: String.t()
   def delete(record_id) do
     "DELETE #{record_id}"
+  end
+
+  @doc """
+  Builds a `DELETE <table> [WHERE <clause>]` statement that removes every row
+  matching the (already-built) WHERE clause in a single server-side operation.
+
+  Secondary, full-text, and vector indexes are maintained by the engine. The
+  result is a `Dllb.Result.DeletedMany` reporting how many rows were removed.
+  An empty (or omitted) WHERE deletes every row in the table.
+
+  ## Examples
+
+      iex> Dllb.Query.delete_where("ast_node", "file_path = '/a.ex'")
+      "DELETE ast_node WHERE file_path = '/a.ex'"
+
+      iex> Dllb.Query.delete_where("ast_node")
+      "DELETE ast_node"
+
+  """
+  @spec delete_where(String.t(), String.t() | nil) :: String.t()
+  def delete_where(table, where \\ nil) do
+    maybe_append("DELETE #{table}", "WHERE", where)
   end
 
   @doc """
@@ -377,6 +407,8 @@ defmodule Dllb.Query do
 
   ## Options
 
+    * `:where` - optional WHERE clause to scope results server-side (applied
+      to the ranked hits before `:limit`)
     * `:limit` - maximum number of hits to return
 
   ## Examples
@@ -387,11 +419,15 @@ defmodule Dllb.Query do
       iex> Dllb.Query.search("article", "body", "graph database", limit: 5)
       "SEARCH article body 'graph database' LIMIT 5"
 
+      iex> Dllb.Query.search("article", "body", "graph", where: "lang = 'en'", limit: 5)
+      "SEARCH article body 'graph' WHERE lang = 'en' LIMIT 5"
+
   """
   @spec search(String.t(), String.t(), String.t(), keyword()) :: String.t()
   def search(table, field, query, opts \\ []) when is_binary(query) do
-    base = "SEARCH #{table} #{field} #{escape_value(query)}"
-    maybe_append_limit(base, Keyword.get(opts, :limit))
+    "SEARCH #{table} #{field} #{escape_value(query)}"
+    |> maybe_append("WHERE", Keyword.get(opts, :where))
+    |> maybe_append_limit(Keyword.get(opts, :limit))
   end
 
   @doc """
@@ -402,6 +438,8 @@ defmodule Dllb.Query do
 
   ## Options
 
+    * `:where` - optional WHERE clause to scope results server-side (applied
+      to the ranked hits before `:k`)
     * `:k` - number of nearest neighbours to return
 
   ## Examples
@@ -412,11 +450,51 @@ defmodule Dllb.Query do
       iex> Dllb.Query.vector_search("doc", "embedding", [0.1, 0.2, 0.3], k: 5)
       "VECTOR SEARCH doc embedding [0.1, 0.2, 0.3] K 5"
 
+      iex> Dllb.Query.vector_search("doc", "embedding", [0.1, 0.2], where: "project = 'p1'", k: 5)
+      "VECTOR SEARCH doc embedding [0.1, 0.2] WHERE project = 'p1' K 5"
+
   """
   @spec vector_search(String.t(), String.t(), [number()], keyword()) :: String.t()
   def vector_search(table, field, vector, opts \\ []) when is_list(vector) do
-    base = "VECTOR SEARCH #{table} #{field} #{escape_value(vector)}"
-    maybe_append_int(base, "K", Keyword.get(opts, :k))
+    "VECTOR SEARCH #{table} #{field} #{escape_value(vector)}"
+    |> maybe_append("WHERE", Keyword.get(opts, :where))
+    |> maybe_append_int("K", Keyword.get(opts, :k))
+  end
+
+  @doc """
+  Builds a `HYBRID SEARCH` statement that fuses a BM25 full-text query on
+  `text_field` with an approximate nearest-neighbour query on `vector_field`.
+
+  The engine normalises each modality's scores independently and blends them
+  as `alpha * text_score + (1 - alpha) * vector_score`, then returns rows
+  ranked best-first, each carrying `score`, `text_score`, and `vector_score`
+  fields. Requires a full-text index on `text_field` and a vector index on
+  `vector_field`.
+
+  ## Options
+
+    * `:alpha` - weight on the (normalised) text score, in `0.0..1.0`; the
+      vector score gets `1 - alpha`. Defaults to the engine's `0.5`.
+    * `:where` - optional WHERE clause to scope results server-side
+    * `:limit` - maximum number of hits to return
+
+  ## Examples
+
+      iex> Dllb.Query.hybrid_search("doc", "body", "graph db", "embedding", [0.1, 0.2])
+      "HYBRID SEARCH doc TEXT body 'graph db' VECTOR embedding [0.1, 0.2]"
+
+      iex> Dllb.Query.hybrid_search("doc", "body", "graph", "embedding", [0.1, 0.2], alpha: 0.7, limit: 5)
+      "HYBRID SEARCH doc TEXT body 'graph' VECTOR embedding [0.1, 0.2] ALPHA 0.7 LIMIT 5"
+
+  """
+  @spec hybrid_search(String.t(), String.t(), String.t(), String.t(), [number()], keyword()) ::
+          String.t()
+  def hybrid_search(table, text_field, query, vector_field, vector, opts \\ [])
+      when is_binary(query) and is_list(vector) do
+    "HYBRID SEARCH #{table} TEXT #{text_field} #{escape_value(query)} VECTOR #{vector_field} #{escape_value(vector)}"
+    |> maybe_append_number("ALPHA", Keyword.get(opts, :alpha))
+    |> maybe_append("WHERE", Keyword.get(opts, :where))
+    |> maybe_append_limit(Keyword.get(opts, :limit))
   end
 
   @doc """
@@ -472,6 +550,107 @@ defmodule Dllb.Query do
   @spec graph_components(String.t()) :: String.t()
   def graph_components(edge_table) do
     "GRAPH COMPONENTS #{edge_table}"
+  end
+
+  @doc """
+  Builds a `GRAPH PAGERANK <edge_table>` statement: weighted PageRank over the
+  edge table, returning `{id, score}` rows ranked by score descending.
+
+  ## Options
+
+    * `:damping` - damping factor (default the engine's `0.85`)
+    * `:max_iter` - maximum power-iteration steps (default the engine's `100`)
+    * `:limit` - return only the top-N nodes
+
+  ## Examples
+
+      iex> Dllb.Query.graph_pagerank("calls")
+      "GRAPH PAGERANK calls"
+
+      iex> Dllb.Query.graph_pagerank("calls", damping: 0.9, max_iter: 50, limit: 10)
+      "GRAPH PAGERANK calls DAMPING 0.9 MAX_ITER 50 LIMIT 10"
+
+  """
+  @spec graph_pagerank(String.t(), keyword()) :: String.t()
+  def graph_pagerank(edge_table, opts \\ []) do
+    "GRAPH PAGERANK #{edge_table}"
+    |> maybe_append_number("DAMPING", Keyword.get(opts, :damping))
+    |> maybe_append_int("MAX_ITER", Keyword.get(opts, :max_iter))
+    |> maybe_append_limit(Keyword.get(opts, :limit))
+  end
+
+  @doc """
+  Builds a `GRAPH CENTRALITY <edge_table>` statement: degree centrality over
+  the edge table, returning `{id, score}` rows ranked by score descending.
+
+  ## Options
+
+    * `:mode` - `:degree` (default, in + out), `:indegree`, or `:outdegree`
+    * `:limit` - return only the top-N nodes
+
+  ## Examples
+
+      iex> Dllb.Query.graph_centrality("calls")
+      "GRAPH CENTRALITY calls"
+
+      iex> Dllb.Query.graph_centrality("calls", mode: :indegree, limit: 10)
+      "GRAPH CENTRALITY calls INDEGREE LIMIT 10"
+
+  """
+  @spec graph_centrality(String.t(), keyword()) :: String.t()
+  def graph_centrality(edge_table, opts \\ []) do
+    "GRAPH CENTRALITY #{edge_table}"
+    |> maybe_append_centrality_mode(Keyword.get(opts, :mode))
+    |> maybe_append_limit(Keyword.get(opts, :limit))
+  end
+
+  @doc """
+  Builds a `GRAPH PATH <src> -> <dst> ON <edge_table>` statement: the shortest
+  directed path between two vertices. `src` and `dst` are bare vertex ids (the
+  id part, not `table:id`). The result is a single row with `found`, `length`,
+  and `path` fields.
+
+  ## Options
+
+    * `:max_depth` - bound the search to at most this many edges
+
+  ## Examples
+
+      iex> Dllb.Query.graph_path("a", "b", "calls")
+      "GRAPH PATH a -> b ON calls"
+
+      iex> Dllb.Query.graph_path("a", "b", "calls", max_depth: 4)
+      "GRAPH PATH a -> b ON calls MAX_DEPTH 4"
+
+  """
+  @spec graph_path(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def graph_path(src, dst, edge_table, opts \\ []) do
+    "GRAPH PATH #{src} -> #{dst} ON #{edge_table}"
+    |> maybe_append_int("MAX_DEPTH", Keyword.get(opts, :max_depth))
+  end
+
+  @doc """
+  Builds a `GRAPH EDGES <edge_table> [WHERE <clause>]` statement: lists the
+  edges of an edge table as rows of `{src, dst, edge_type, weight, ...props}`,
+  surfacing the real stored `weight` (default `1.0`). The optional WHERE
+  filters the synthetic edge rows (e.g. by `src`, `dst`, or `weight`).
+
+  ## Options
+
+    * `:where` - optional WHERE clause string
+
+  ## Examples
+
+      iex> Dllb.Query.graph_edges("calls")
+      "GRAPH EDGES calls"
+
+      iex> Dllb.Query.graph_edges("calls", where: "weight > 0.5")
+      "GRAPH EDGES calls WHERE weight > 0.5"
+
+  """
+  @spec graph_edges(String.t(), keyword()) :: String.t()
+  def graph_edges(edge_table, opts \\ []) do
+    maybe_append("GRAPH EDGES #{edge_table}", "WHERE", Keyword.get(opts, :where))
   end
 
   @doc """
@@ -565,4 +744,14 @@ defmodule Dllb.Query do
   defp maybe_append_resolution(query, nil), do: query
   defp maybe_append_resolution(query, r) when is_float(r), do: "#{query} RESOLUTION #{r}"
   defp maybe_append_resolution(query, r) when is_integer(r), do: "#{query} RESOLUTION #{r}.0"
+
+  # Appends `KW <number>` for float or integer values (e.g. DAMPING, ALPHA).
+  defp maybe_append_number(query, _kw, nil), do: query
+  defp maybe_append_number(query, kw, v) when is_number(v), do: "#{query} #{kw} #{v}"
+  defp maybe_append_number(query, _kw, _), do: query
+
+  defp maybe_append_centrality_mode(query, nil), do: query
+  defp maybe_append_centrality_mode(query, :degree), do: "#{query} DEGREE"
+  defp maybe_append_centrality_mode(query, :indegree), do: "#{query} INDEGREE"
+  defp maybe_append_centrality_mode(query, :outdegree), do: "#{query} OUTDEGREE"
 end

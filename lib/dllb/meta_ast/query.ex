@@ -140,132 +140,78 @@ defmodule Dllb.MetaAST.Query do
   # ---------------------------------------------------------------------------
 
   @doc """
-  HNSW vector similarity search on `source_embedding`.
+  Vector (HNSW) similarity search over `source_embedding`, built with the
+  engine's native `VECTOR SEARCH` verb. Results come back nearest-first, each
+  row carrying a `distance` field. Requires a vector index on
+  `source_embedding` (see `Dllb.Schema.ast_node_search_indexes/0`).
 
   ## Options
 
     * `:limit` - max results (default 10)
-    * `:ef` - HNSW exploration factor (default 100)
-    * `:kind` - optional kind filter
+    * `:kind` - optional kind filter (scopes results server-side)
     * `:file_path` - optional file filter
     * `:language` - optional language filter
+    * `:project_path` - optional project filter (multi-project isolation)
   """
-  @spec similar_to([float()], keyword()) :: String.t()
+  @spec similar_to([number()], keyword()) :: String.t()
   def similar_to(embedding, opts \\ []) do
     k = Keyword.get(opts, :limit, 10)
-    ef = Keyword.get(opts, :ef, 100)
-
-    vec_str = "[" <> Enum.map_join(embedding, ", ", &to_string/1) <> "]"
-    knn_clause = "source_embedding <|#{k},#{ef}|> #{vec_str}"
-
-    filters =
-      []
-      |> maybe_add_filter(:kind, opts)
-      |> maybe_add_filter(:file_path, opts)
-      |> maybe_add_filter(:language, opts)
-
-    where_clause =
-      case filters do
-        [] -> knn_clause
-        parts -> Enum.join(parts, " AND ") <> " AND " <> knn_clause
-      end
-
-    Query.select(@table,
-      fields: [
-        "id",
-        "name",
-        "kind",
-        "file_path",
-        "source_text",
-        "vector::distance::knn() AS score"
-      ],
-      where: where_clause,
-      order: "score",
-      limit: k
-    )
+    Query.vector_search(@table, "source_embedding", embedding, where: scope_where(opts), k: k)
   end
 
   @doc """
-  Full-text BM25 search on `source_text`.
+  Full-text BM25 search on `source_text`, built with the engine's native
+  `SEARCH` verb. Each row carries a `score`. Requires a full-text index on
+  `source_text`.
 
   ## Options
 
     * `:limit` - max results (default 20)
-    * `:kind` - optional kind filter
+    * `:kind` / `:file_path` / `:language` / `:project_path` - optional scope
+      filters
   """
   @spec search_source(String.t(), keyword()) :: String.t()
   def search_source(text, opts \\ []) do
     limit = Keyword.get(opts, :limit, 20)
-    escaped = escape(text)
-
-    where =
-      case Keyword.get(opts, :kind) do
-        nil -> "source_text @@ #{escaped}"
-        kind -> "kind = #{escape(kind)} AND source_text @@ #{escaped}"
-      end
-
-    Query.select(@table,
-      fields: ["id", "name", "kind", "file_path", "source_text", "search::score(1) AS score"],
-      where: where,
-      order: "score DESC",
-      limit: limit
-    )
+    Query.search(@table, "source_text", text, where: scope_where(opts), limit: limit)
   end
 
   @doc """
-  Full-text BM25 search on `docstring`.
+  Full-text BM25 search on `docstring`, built with the engine's native
+  `SEARCH` verb. Each row carries a `score`.
+
+  ## Options
+
+    * `:limit` - max results (default 20)
   """
   @spec search_docs(String.t(), keyword()) :: String.t()
   def search_docs(text, opts \\ []) do
     limit = Keyword.get(opts, :limit, 20)
-    escaped = escape(text)
-
-    Query.select(@table,
-      fields: ["id", "name", "kind", "file_path", "docstring", "search::score(1) AS score"],
-      where: "docstring @@ #{escaped}",
-      order: "score DESC",
-      limit: limit
-    )
+    Query.search(@table, "docstring", text, limit: limit)
   end
 
   @doc """
-  Combined vector + full-text hybrid search.
-
-  Scores are combined as `vec_weight * vec_score + ft_weight * ft_score`.
+  Combined full-text + vector hybrid search via the engine's native
+  `HYBRID SEARCH` verb: BM25 on `source_text` fused with HNSW on
+  `source_embedding`. Each row carries `score`, `text_score`, and
+  `vector_score`.
 
   ## Options
 
     * `:limit` - max results (default 10)
-    * `:ef` - HNSW exploration factor (default 100)
-    * `:vec_weight` - weight for vector score (default 0.6)
-    * `:ft_weight` - weight for full-text score (default 0.4)
+    * `:alpha` - weight on the text score in `0.0..1.0` (default 0.5); the
+      vector score gets `1 - alpha`
+    * `:kind` / `:file_path` / `:language` / `:project_path` - optional scope
+      filters
   """
-  @spec hybrid_search(String.t(), [float()], keyword()) :: String.t()
+  @spec hybrid_search(String.t(), [number()], keyword()) :: String.t()
   def hybrid_search(text, embedding, opts \\ []) do
     k = Keyword.get(opts, :limit, 10)
-    ef = Keyword.get(opts, :ef, 100)
-    vec_w = Keyword.get(opts, :vec_weight, 0.6)
-    ft_w = Keyword.get(opts, :ft_weight, 0.4)
+    alpha = Keyword.get(opts, :alpha, 0.5)
 
-    vec_str = "[" <> Enum.map_join(embedding, ", ", &to_string/1) <> "]"
-    escaped_text = escape(text)
-
-    where = "source_embedding <|#{k * 2},#{ef}|> #{vec_str} AND source_text @@ #{escaped_text}"
-
-    order = "(1.0 - vector::distance::knn()) * #{vec_w} + search::score(1) * #{ft_w} DESC"
-
-    Query.select(@table,
-      fields: [
-        "id",
-        "name",
-        "kind",
-        "file_path",
-        "source_text",
-        "vector::distance::knn() AS vec_score",
-        "search::score(1) AS ft_score"
-      ],
-      where: where,
-      order: order,
+    Query.hybrid_search(@table, "source_text", text, "source_embedding", embedding,
+      alpha: alpha,
+      where: scope_where(opts),
       limit: k
     )
   end
@@ -275,91 +221,68 @@ defmodule Dllb.MetaAST.Query do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Deletes all AST nodes belonging to a file.
-
-  Since dllb currently supports `DELETE table:id` (point deletes) but not
-  `DELETE ... WHERE`, this returns a two-step approach: a SELECT to find
-  the ids, then point DELETEs for each. Use with `exec_delete_by_file/2`.
+  Builds a single-statement `DELETE ast_node WHERE file_path = ...` that
+  removes every node belonging to a file in one server-side operation
+  (secondary, full-text, and vector indexes are maintained by the engine).
+  Pair with `exec_delete_by_file/2`.
   """
-  @spec delete_by_file_select(String.t()) :: String.t()
-  def delete_by_file_select(file_path) do
-    Query.select(@table, fields: ["id"], where: "file_path = #{escape(file_path)}")
+  @spec delete_by_file(String.t()) :: String.t()
+  def delete_by_file(file_path) do
+    Query.delete_where(@table, "file_path = #{escape(file_path)}")
   end
 
   @doc """
-  Executes a two-step delete-by-file: SELECT ids, then batch DELETE.
+  Builds a single-statement `DELETE ast_node WHERE project_path = ...` that
+  removes every node of a project in one server-side operation. Pair with
+  `exec_delete_by_project/2`.
+  """
+  @spec delete_by_project(String.t()) :: String.t()
+  def delete_by_project(project_path) do
+    Query.delete_where(@table, "project_path = #{escape(project_path)}")
+  end
 
-  Returns `{:ok, count}` or `{:error, reason}`.
+  @doc """
+  Executes a native delete-by-file (`DELETE ... WHERE`) in a single
+  round-trip, returning `{:ok, count}` (rows removed) or `{:error, reason}`.
   """
   @spec exec_delete_by_file(String.t(), MetaAST.query_fn()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def exec_delete_by_file(file_path, query_fn) do
-    select_q = delete_by_file_select(file_path)
-
-    with {:ok, rows} <- exec_rows(select_q, query_fn) do
-      ids = Enum.map(rows, & &1["id"])
-      delete_queries = Enum.map(ids, &Query.delete/1)
-
-      errors =
-        delete_queries
-        |> Enum.map(query_fn)
-        |> Enum.filter(&match?({:error, _}, &1))
-
-      case errors do
-        [] -> {:ok, length(ids)}
-        [first_error | _] -> first_error
-      end
-    end
+    exec_delete_many(delete_by_file(file_path), query_fn)
   end
 
   @doc """
-  Executes a two-step delete-by-project: SELECT ids, then batch DELETE.
+  Executes a native delete-by-project (`DELETE ... WHERE`) in a single
+  round-trip, returning `{:ok, count}` or `{:error, reason}`.
   """
   @spec exec_delete_by_project(String.t(), MetaAST.query_fn()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def exec_delete_by_project(project_path, query_fn) do
-    select_q =
-      Query.select(@table, fields: ["id"], where: "project_path = #{escape(project_path)}")
-
-    with {:ok, rows} <- exec_rows(select_q, query_fn) do
-      ids = Enum.map(rows, & &1["id"])
-      delete_queries = Enum.map(ids, &Query.delete/1)
-
-      errors =
-        delete_queries
-        |> Enum.map(query_fn)
-        |> Enum.filter(&match?({:error, _}, &1))
-
-      case errors do
-        [] -> {:ok, length(ids)}
-        [first_error | _] -> first_error
-      end
-    end
+    exec_delete_many(delete_by_project(project_path), query_fn)
   end
 
   @doc """
-  Returns a SELECT for overall statistics (node count).
-
-  Note: dllb does not yet support COUNT/GROUP BY, so this returns all ids
-  and the caller aggregates client-side.
+  Returns a `COUNT ast_node GROUP BY kind` query: one row per kind, each
+  carrying a `count`, aggregated server-side.
   """
   @spec stats_query() :: String.t()
   def stats_query do
-    Query.select(@table, fields: ["id", "kind"])
+    Query.count(@table, group_by: "kind")
   end
 
   @doc """
-  Executes stats query and returns aggregated counts.
+  Executes the grouped stats query and returns
+  `{:ok, %{total: n, by_kind: %{kind => count}}}`.
+
+  The grouped rows carry serde-tagged values (e.g. `%{"String" => "..."}`),
+  which are unwrapped here into plain kinds and integer counts.
   """
   @spec exec_stats(MetaAST.query_fn()) :: {:ok, map()} | {:error, term()}
   def exec_stats(query_fn) do
     with {:ok, rows} <- exec_rows(stats_query(), query_fn) do
-      by_kind =
-        rows
-        |> Enum.group_by(& &1["kind"])
-        |> Map.new(fn {kind, items} -> {kind, length(items)} end)
-
-      {:ok, %{total: length(rows), by_kind: by_kind}}
+      by_kind = Map.new(rows, fn row -> {unwrap(row["kind"]), unwrap(row["count"])} end)
+      total = by_kind |> Map.values() |> Enum.sum()
+      {:ok, %{total: total, by_kind: by_kind}}
     end
   end
 
@@ -463,6 +386,15 @@ defmodule Dllb.MetaAST.Query do
     end
   end
 
+  defp exec_delete_many(query_string, query_fn) do
+    case query_fn.(query_string) do
+      {:ok, %Dllb.Result.DeletedMany{count: count}} -> {:ok, count}
+      {:ok, %Dllb.Result.Error{message: msg}} -> {:error, {:query_error, msg}}
+      {:ok, other} -> {:error, {:unexpected_result, other}}
+      {:error, _} = err -> err
+    end
+  end
+
   defp escape(value) when is_binary(value) do
     escaped = String.replace(value, "'", "''")
     "'#{escaped}'"
@@ -480,4 +412,28 @@ defmodule Dllb.MetaAST.Query do
       value -> ["#{key} = #{escape(to_string(value))}" | filters]
     end
   end
+
+  # Builds an optional WHERE clause from scope options (kind/file_path/
+  # language/project_path), ANDing the present filters. Returns `nil` when no
+  # scope option is given so the search verb omits WHERE entirely.
+  defp scope_where(opts) do
+    []
+    |> maybe_add_filter(:project_path, opts)
+    |> maybe_add_filter(:language, opts)
+    |> maybe_add_filter(:file_path, opts)
+    |> maybe_add_filter(:kind, opts)
+    |> case do
+      [] -> nil
+      filters -> Enum.join(filters, " AND ")
+    end
+  end
+
+  # dllb serde-tags Values by variant: %{"String" => v}, %{"Int" => n}, ...
+  # `Value::None` serializes to the bare string "None".
+  defp unwrap(%{"String" => v}), do: v
+  defp unwrap(%{"Int" => v}), do: v
+  defp unwrap(%{"Float" => v}), do: v
+  defp unwrap(%{"Bool" => v}), do: v
+  defp unwrap("None"), do: nil
+  defp unwrap(v), do: v
 end

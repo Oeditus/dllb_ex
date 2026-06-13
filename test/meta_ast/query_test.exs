@@ -111,46 +111,58 @@ defmodule Dllb.MetaAST.QueryTest do
   # ---------------------------------------------------------------------------
 
   describe "similar_to/2" do
-    test "builds HNSW KNN query" do
+    test "builds a native VECTOR SEARCH query" do
       q = Query.similar_to([0.1, 0.2, 0.3], limit: 5)
-      assert q =~ "source_embedding <|5,100|>"
-      assert q =~ "LIMIT 5"
-      assert q =~ "vector::distance::knn() AS score"
+      assert q == "VECTOR SEARCH ast_node source_embedding [0.1, 0.2, 0.3] K 5"
     end
 
-    test "includes kind filter" do
+    test "includes kind filter as a WHERE scope" do
       q = Query.similar_to([0.1, 0.2], kind: "function_def")
+      assert q =~ "VECTOR SEARCH ast_node source_embedding [0.1, 0.2]"
+      assert q =~ "WHERE kind = 'function_def'"
+    end
+
+    test "combines multiple scope filters with AND" do
+      q = Query.similar_to([0.1], kind: "function_def", project_path: "/p")
       assert q =~ "kind = 'function_def'"
+      assert q =~ "project_path = '/p'"
+      assert q =~ " AND "
     end
   end
 
   describe "search_source/2" do
-    test "builds full-text query on source_text" do
+    test "builds a native full-text SEARCH on source_text" do
       q = Query.search_source("async fn")
-      assert q =~ "source_text @@ 'async fn'"
-      assert q =~ "search::score(1) AS score"
+      assert q == "SEARCH ast_node source_text 'async fn' LIMIT 20"
     end
 
-    test "includes kind filter" do
+    test "includes kind filter as a WHERE scope" do
       q = Query.search_source("async fn", kind: "function_def")
-      assert q =~ "kind = 'function_def'"
+      assert q =~ "SEARCH ast_node source_text 'async fn'"
+      assert q =~ "WHERE kind = 'function_def'"
     end
   end
 
   describe "search_docs/2" do
-    test "builds full-text query on docstring" do
+    test "builds a native full-text SEARCH on docstring" do
       q = Query.search_docs("parses input")
-      assert q =~ "docstring @@ 'parses input'"
+      assert q == "SEARCH ast_node docstring 'parses input' LIMIT 20"
     end
   end
 
   describe "hybrid_search/3" do
-    test "builds combined vector + full-text query" do
+    test "builds a native HYBRID SEARCH statement" do
       q = Query.hybrid_search("async fn", [0.1, 0.2], limit: 5)
-      assert q =~ "source_embedding <|"
-      assert q =~ "source_text @@ 'async fn'"
-      assert q =~ "vec_score"
-      assert q =~ "ft_score"
+      assert q =~ "HYBRID SEARCH ast_node TEXT source_text 'async fn'"
+      assert q =~ "VECTOR source_embedding [0.1, 0.2]"
+      assert q =~ "ALPHA 0.5"
+      assert q =~ "LIMIT 5"
+    end
+
+    test "honours a custom alpha and scope filter" do
+      q = Query.hybrid_search("async fn", [0.1, 0.2], alpha: 0.7, kind: "function_def")
+      assert q =~ "ALPHA 0.7"
+      assert q =~ "WHERE kind = 'function_def'"
     end
   end
 
@@ -158,18 +170,69 @@ defmodule Dllb.MetaAST.QueryTest do
   # Lifecycle queries
   # ---------------------------------------------------------------------------
 
-  describe "delete_by_file_select/1" do
-    test "builds SELECT for ids by file_path" do
-      q = Query.delete_by_file_select("/app/lib/parser.ex")
-      assert q =~ "SELECT id FROM ast_node"
-      assert q =~ "file_path = '/app/lib/parser.ex'"
+  describe "delete_by_file/1" do
+    test "builds a native DELETE ... WHERE by file_path" do
+      q = Query.delete_by_file("/app/lib/parser.ex")
+      assert q == "DELETE ast_node WHERE file_path = '/app/lib/parser.ex'"
+    end
+  end
+
+  describe "delete_by_project/1" do
+    test "builds a native DELETE ... WHERE by project_path" do
+      q = Query.delete_by_project("/opt/myproject")
+      assert q == "DELETE ast_node WHERE project_path = '/opt/myproject'"
     end
   end
 
   describe "stats_query/0" do
-    test "builds SELECT for id and kind" do
-      q = Query.stats_query()
-      assert q =~ "SELECT id, kind FROM ast_node"
+    test "builds a COUNT ... GROUP BY kind" do
+      assert Query.stats_query() == "COUNT ast_node GROUP BY kind"
+    end
+  end
+
+  describe "exec_delete_by_file/2" do
+    test "returns the deleted count from a DeletedMany result" do
+      fun = fn q ->
+        assert q == "DELETE ast_node WHERE file_path = '/a.ex'"
+        {:ok, %Dllb.Result.DeletedMany{count: 3}}
+      end
+
+      assert {:ok, 3} = Query.exec_delete_by_file("/a.ex", fun)
+    end
+
+    test "propagates query errors" do
+      fun = fn _q -> {:ok, %Dllb.Result.Error{message: "boom"}} end
+      assert {:error, {:query_error, "boom"}} = Query.exec_delete_by_file("/a.ex", fun)
+    end
+  end
+
+  describe "exec_delete_by_project/2" do
+    test "returns the deleted count from a DeletedMany result" do
+      fun = fn q ->
+        assert q == "DELETE ast_node WHERE project_path = '/p'"
+        {:ok, %Dllb.Result.DeletedMany{count: 12}}
+      end
+
+      assert {:ok, 12} = Query.exec_delete_by_project("/p", fun)
+    end
+  end
+
+  describe "exec_stats/1" do
+    test "aggregates grouped COUNT rows into total and by_kind" do
+      fun = fn q ->
+        assert q == "COUNT ast_node GROUP BY kind"
+
+        rows = [
+          %{"kind" => %{"String" => "function_def"}, "count" => %{"Int" => 5}},
+          %{"kind" => %{"String" => "container"}, "count" => %{"Int" => 2}}
+        ]
+
+        {:ok, %Dllb.Result.Rows{count: 2, data: rows}}
+      end
+
+      assert {:ok, %{total: 7, by_kind: by_kind}} = Query.exec_stats(fun)
+      assert by_kind["function_def"] == 5
+      assert by_kind["container"] == 2
     end
   end
 

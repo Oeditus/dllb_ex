@@ -7,6 +7,7 @@ defmodule Dllb.Result do
     * `Dllb.Result.Ok` - generic success (`{"status":"ok"}`)
     * `Dllb.Result.Created` - record created with an id
     * `Dllb.Result.Deleted` - record deleted, reports whether it existed
+    * `Dllb.Result.DeletedMany` - `DELETE ... WHERE`, reports how many removed
     * `Dllb.Result.Rows` - query result with count and data rows
     * `Dllb.Result.Error` - server-side error with a message
   """
@@ -27,6 +28,12 @@ defmodule Dllb.Result do
     @moduledoc "Represents a deletion, reporting whether the record existed."
     defstruct [:existed]
     @type t :: %__MODULE__{existed: boolean()}
+  end
+
+  defmodule DeletedMany do
+    @moduledoc "Represents a `DELETE ... WHERE` deletion, reporting the number of rows removed."
+    defstruct [:count]
+    @type t :: %__MODULE__{count: non_neg_integer()}
   end
 
   defmodule Rows do
@@ -100,6 +107,7 @@ defmodule Dllb.Result do
           Ok.t()
           | Created.t()
           | Deleted.t()
+          | DeletedMany.t()
           | Rows.t()
           | Error.t()
           | Batch.t()
@@ -127,6 +135,10 @@ defmodule Dllb.Result do
 
   def parse(%{"status" => "deleted", "existed" => existed}) do
     {:ok, %Deleted{existed: existed}}
+  end
+
+  def parse(%{"status" => "deleted_many", "count" => count}) do
+    {:ok, %DeletedMany{count: count}}
   end
 
   def parse(%{"status" => "rows", "count" => count, "data" => data}) do

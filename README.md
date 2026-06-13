@@ -17,10 +17,10 @@ on data rather than sockets.
 
 - **Connection pooling**—NimblePool-managed TCP sockets with automatic reconnection on dead connections.
 - **Wire protocol**—Line-based text over TCP; supports JSON, toon, and CSV response formats.
-- **Query builder**—Composable functions for CREATE, SELECT, UPDATE, DELETE, RELATE, COUNT, upsert (`ON CONFLICT UPDATE [SET ...]`), DEFINE TABLE/FIELD, and DEFINE/REMOVE INDEX statements.
-- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `Rows`, `Count`, `Update`, `Batch`, `Communities`, `Components`, `Error`) parsed from server responses.
+- **Query builder**—Composable functions for CREATE, SELECT (with `ORDER BY`), UPDATE, DELETE (point and `DELETE ... WHERE`), RELATE, COUNT (with `GROUP BY`), upsert (`ON CONFLICT UPDATE [SET ...]`), DEFINE TABLE/FIELD, DEFINE/REMOVE INDEX, full-text/vector/hybrid search, and graph analytics (COMMUNITIES, COMPONENTS, PAGERANK, CENTRALITY, PATH, EDGES) statements.
+- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `DeletedMany`, `Rows`, `Count`, `Update`, `Batch`, `Communities`, `Components`, `Error`) parsed from server responses.
 - **Secondary indexes**—Persisted single- and multi-field (composite) index definitions with optional `UNIQUE` constraints. Equality and range filters on indexed fields are transparently accelerated by the engine.
-- **Full-text & vector search**—`DEFINE FULLTEXT INDEX` (BM25/Tantivy) and `DEFINE VECTOR INDEX` (HNSW) creation, plus `SEARCH` and `VECTOR SEARCH` query builders.
+- **Full-text & vector search**—`DEFINE FULLTEXT INDEX` (BM25/Tantivy) and `DEFINE VECTOR INDEX` (HNSW) creation, plus `SEARCH`, `VECTOR SEARCH`, and `HYBRID SEARCH` query builders with optional server-side `WHERE` scoping.
 - **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion.
 - **Schema bootstrap**—Declarative schema definitions executed through any query function.
 - **OTP-ready**—Application supervision tree with opt-in pool startup via `config :dllb, enabled: true`.
@@ -112,8 +112,9 @@ indexed fields are accelerated automatically.
 ### Full-text and vector search
 
 Full-text (BM25) and vector (HNSW) indexes are created over the wire and
-queried with the `SEARCH` and `VECTOR SEARCH` verbs. Both require a dllb
-server with search services enabled (the default server build).
+queried with the `SEARCH`, `VECTOR SEARCH`, and `HYBRID SEARCH` verbs, each
+accepting an optional server-side `WHERE` scope. All require a dllb server
+with search services enabled (the default server build).
 
 ```elixir
 # Define a full-text index (optionally with a language analyzer).
@@ -131,11 +132,53 @@ Dllb.Query.define_vector_index("ast_node", "vec_src", "source_embedding", 768, m
 # Approximate nearest-neighbour search; each row carries a "distance" field.
 Dllb.Query.vector_search("ast_node", "source_embedding", [0.12, 0.07, 0.91], k: 10)
 # => "VECTOR SEARCH ast_node source_embedding [0.12, 0.07, 0.91] K 10"
+
+# Scope results server-side (multi-project isolation, kind/language filters).
+Dllb.Query.vector_search("ast_node", "source_embedding", [0.12, 0.07],
+  where: "project_path = '/app'",
+  k: 10
+)
+# => "VECTOR SEARCH ast_node source_embedding [0.12, 0.07] WHERE project_path = '/app' K 10"
+
+# Hybrid search fuses BM25 and HNSW; rows carry score, text_score, vector_score.
+Dllb.Query.hybrid_search("ast_node", "source_text", "parse tokens", "source_embedding", [0.12, 0.07],
+  alpha: 0.6,
+  limit: 10
+)
+# => "HYBRID SEARCH ast_node TEXT source_text 'parse tokens' VECTOR source_embedding [0.12, 0.07] ALPHA 0.6 LIMIT 10"
 ```
 
 Valid analyzers: `default`, `simple`, `english`, `spanish`, `french`,
 `german`, `italian`, `portuguese`, `russian`. Valid metrics: `cosine`,
 `euclidean` (alias `l2`), `dot` (alias `dotproduct`/`dot_product`).
+
+### Aggregation, deletion, and graph analytics
+
+```elixir
+# Grouped COUNT: one row per kind, each with a count (best-first).
+Dllb.Query.count("ast_node", group_by: "kind")
+# => "COUNT ast_node GROUP BY kind"
+
+# Server-side delete-by-predicate (engine maintains all indexes).
+Dllb.Query.delete_where("ast_node", "file_path = '/app/lib/old.ex'")
+# => "DELETE ast_node WHERE file_path = '/app/lib/old.ex'"
+
+# Weighted PageRank over an edge table, top-N by score.
+Dllb.Query.graph_pagerank("calls", damping: 0.85, limit: 20)
+# => "GRAPH PAGERANK calls DAMPING 0.85 LIMIT 20"
+
+# Degree centrality (also :indegree / :outdegree).
+Dllb.Query.graph_centrality("calls", mode: :indegree, limit: 20)
+# => "GRAPH CENTRALITY calls INDEGREE LIMIT 20"
+
+# Shortest directed path between two vertices.
+Dllb.Query.graph_path("a", "b", "calls", max_depth: 6)
+# => "GRAPH PATH a -> b ON calls MAX_DEPTH 6"
+
+# List edges with their stored weights (default 1.0).
+Dllb.Query.graph_edges("calls", where: "weight > 0.5")
+# => "GRAPH EDGES calls WHERE weight > 0.5"
+```
 
 ### Upserts
 
