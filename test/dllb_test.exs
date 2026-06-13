@@ -109,6 +109,46 @@ defmodule DllbTest do
                "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE SET age = 31"
     end
 
+    test "define_fulltext_index builds FULLTEXT INDEX DDL" do
+      assert Dllb.Query.define_fulltext_index("article", "ft_body", "body") ==
+               "DEFINE FULLTEXT INDEX ft_body ON TABLE article FIELDS body"
+    end
+
+    test "define_fulltext_index supports the analyzer option" do
+      assert Dllb.Query.define_fulltext_index("article", "ft_body", "body", analyzer: "english") ==
+               "DEFINE FULLTEXT INDEX ft_body ON TABLE article FIELDS body ANALYZER english"
+    end
+
+    test "define_vector_index builds VECTOR INDEX DDL" do
+      assert Dllb.Query.define_vector_index("doc", "vec_emb", "embedding", 8) ==
+               "DEFINE VECTOR INDEX vec_emb ON TABLE doc FIELDS embedding DIMENSION 8"
+    end
+
+    test "define_vector_index supports the metric option" do
+      assert Dllb.Query.define_vector_index("doc", "vec_emb", "embedding", 8, metric: "euclidean") ==
+               "DEFINE VECTOR INDEX vec_emb ON TABLE doc FIELDS embedding DIMENSION 8 METRIC euclidean"
+    end
+
+    test "search builds a BM25 SEARCH statement" do
+      assert Dllb.Query.search("article", "body", "graph database") ==
+               "SEARCH article body 'graph database'"
+    end
+
+    test "search escapes the query and appends LIMIT" do
+      assert Dllb.Query.search("article", "body", "it's", limit: 5) ==
+               "SEARCH article body 'it''s' LIMIT 5"
+    end
+
+    test "vector_search builds a VECTOR SEARCH statement" do
+      assert Dllb.Query.vector_search("doc", "embedding", [0.1, 0.2, 0.3]) ==
+               "VECTOR SEARCH doc embedding [0.1, 0.2, 0.3]"
+    end
+
+    test "vector_search appends K" do
+      assert Dllb.Query.vector_search("doc", "embedding", [1, 2, 3], k: 5) ==
+               "VECTOR SEARCH doc embedding [1, 2, 3] K 5"
+    end
+
     test "raw passthrough" do
       assert Dllb.Query.raw("SELECT * FROM foo") == "SELECT * FROM foo"
     end
@@ -278,6 +318,27 @@ defmodule DllbTest do
       refute idx =~ "HNSW"
       refute idx =~ "SEARCH ANALYZER"
       refute idx =~ "fulltext"
+    end
+
+    test "ast_node_search_indexes defines fulltext and vector indexes" do
+      joined = Enum.join(Dllb.Schema.ast_node_search_indexes(), " ")
+
+      assert joined =~
+               "DEFINE FULLTEXT INDEX idx_source_text ON TABLE ast_node FIELDS source_text"
+
+      assert joined =~ "DEFINE FULLTEXT INDEX idx_docstring ON TABLE ast_node FIELDS docstring"
+
+      assert joined =~
+               "DEFINE VECTOR INDEX idx_source_embedding ON TABLE ast_node FIELDS source_embedding DIMENSION 768 METRIC cosine"
+
+      assert joined =~
+               "DEFINE VECTOR INDEX idx_structure_embedding ON TABLE ast_node FIELDS structure_embedding DIMENSION 384 METRIC cosine"
+    end
+
+    test "all_statements includes full-text and vector search index DDL" do
+      joined = Enum.join(Dllb.Schema.all_statements(), " ")
+      assert joined =~ "DEFINE FULLTEXT INDEX"
+      assert joined =~ "DEFINE VECTOR INDEX"
     end
 
     test "bootstrap executes all statements" do

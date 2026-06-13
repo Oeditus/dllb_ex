@@ -94,11 +94,8 @@ defmodule Dllb.Schema do
     - `idx_project_path` on `project_path`
     - `idx_file_kind` composite on `file_path, kind` (leftmost-prefix)
 
-  Vector (HNSW) and full-text indexes are intentionally omitted: the engine's
-  query protocol defines only plain secondary indexes, so those cannot be
-  created over the wire. The `source_embedding`, `structure_embedding`,
-  `source_text`, and `docstring` fields are still stored as ordinary document
-  fields.
+  Full-text (BM25) and vector (HNSW) search indexes over the embedding and
+  text fields are defined separately by `ast_node_search_indexes/0`.
   """
   @spec ast_node_indexes() :: [String.t()]
   def ast_node_indexes do
@@ -109,6 +106,33 @@ defmodule Dllb.Schema do
       Query.define_index("ast_node", "idx_module", ["module"]),
       Query.define_index("ast_node", "idx_project_path", ["project_path"]),
       Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"])
+    ]
+  end
+
+  @doc """
+  Returns the list of query strings that define the full-text and vector
+  search indexes on the `ast_node` table.
+
+  Created over the wire via the engine's `DEFINE FULLTEXT INDEX` /
+  `DEFINE VECTOR INDEX` DDL. These require a dllb server with full-text/vector
+  services enabled (the default server build):
+
+    - `idx_source_text` - full-text (BM25) on `source_text`
+    - `idx_docstring` - full-text (BM25) on `docstring`
+    - `idx_source_embedding` - vector (HNSW) on `source_embedding`, 768-dim, cosine
+    - `idx_structure_embedding` - vector (HNSW) on `structure_embedding`, 384-dim, cosine
+  """
+  @spec ast_node_search_indexes() :: [String.t()]
+  def ast_node_search_indexes do
+    [
+      Query.define_fulltext_index("ast_node", "idx_source_text", "source_text"),
+      Query.define_fulltext_index("ast_node", "idx_docstring", "docstring"),
+      Query.define_vector_index("ast_node", "idx_source_embedding", "source_embedding", 768,
+        metric: "cosine"
+      ),
+      Query.define_vector_index("ast_node", "idx_structure_embedding", "structure_embedding", 384,
+        metric: "cosine"
+      )
     ]
   end
 
@@ -126,10 +150,12 @@ defmodule Dllb.Schema do
   end
 
   @doc """
-  Returns all schema statements (table definitions + index definitions) in order.
+  Returns all schema statements (table, secondary index, full-text/vector
+  search index, and edge-index definitions) in order.
   """
   @spec all_statements() :: [String.t()]
   def all_statements do
-    ast_node_table() ++ ast_node_indexes() ++ edge_idx_table()
+    ast_node_table() ++
+      ast_node_indexes() ++ ast_node_search_indexes() ++ edge_idx_table()
   end
 end

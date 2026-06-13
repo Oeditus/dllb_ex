@@ -3,8 +3,9 @@ defmodule Dllb.Query do
   Query builder that generates dllb SQL strings.
 
   Provides functions to construct CREATE, SELECT, UPDATE, DELETE, RELATE,
-  and DEFINE statements for the dllb query language. All functions return
-  plain query strings ready to be sent over the wire.
+  COUNT, DEFINE (secondary, full-text, and vector index), REMOVE INDEX, and
+  SEARCH / VECTOR SEARCH statements for the dllb query language. All functions
+  return plain query strings ready to be sent over the wire.
   """
 
   @type fields :: %{optional(atom()) => term()}
@@ -296,6 +297,126 @@ defmodule Dllb.Query do
   @spec remove_index(String.t(), String.t()) :: String.t()
   def remove_index(table, name) do
     "REMOVE INDEX #{name} ON TABLE #{table}"
+  end
+
+  @doc """
+  Builds a `DEFINE FULLTEXT INDEX` statement that registers a BM25 full-text
+  (Tantivy) index over a single text `field`.
+
+  Requires a dllb server with full-text/vector services enabled (the default
+  server build).
+
+  ## Options
+
+    * `:analyzer` - tokenizer/stemmer to apply. One of `"default"`, `"simple"`,
+      or a language (`"english"`, `"spanish"`, `"french"`, `"german"`,
+      `"italian"`, `"portuguese"`, `"russian"`). Defaults to the engine's
+      `default` analyzer when omitted.
+
+  ## Examples
+
+      iex> Dllb.Query.define_fulltext_index("article", "ft_body", "body")
+      "DEFINE FULLTEXT INDEX ft_body ON TABLE article FIELDS body"
+
+      iex> Dllb.Query.define_fulltext_index("article", "ft_body", "body", analyzer: "english")
+      "DEFINE FULLTEXT INDEX ft_body ON TABLE article FIELDS body ANALYZER english"
+
+  """
+  @spec define_fulltext_index(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def define_fulltext_index(table, name, field, opts \\ []) do
+    base = "DEFINE FULLTEXT INDEX #{name} ON TABLE #{table} FIELDS #{field}"
+
+    case Keyword.get(opts, :analyzer) do
+      nil -> base
+      "" -> base
+      analyzer -> "#{base} ANALYZER #{analyzer}"
+    end
+  end
+
+  @doc """
+  Builds a `DEFINE VECTOR INDEX` statement that registers an approximate
+  nearest-neighbour (HNSW) index over a dense-embedding `field`.
+
+  `dimension` is the (positive) length of the vectors to be indexed. Requires
+  a dllb server with full-text/vector services enabled (the default server
+  build).
+
+  ## Options
+
+    * `:metric` - distance metric: `"cosine"` (default), `"euclidean"` (alias
+      `"l2"`), or `"dot"` (alias `"dotproduct"`/`"dot_product"`). Defaults to
+      the engine's `cosine` metric when omitted.
+
+  ## Examples
+
+      iex> Dllb.Query.define_vector_index("ast_node", "vec_src", "source_embedding", 768)
+      "DEFINE VECTOR INDEX vec_src ON TABLE ast_node FIELDS source_embedding DIMENSION 768"
+
+      iex> Dllb.Query.define_vector_index("doc", "vec_emb", "embedding", 8, metric: "euclidean")
+      "DEFINE VECTOR INDEX vec_emb ON TABLE doc FIELDS embedding DIMENSION 8 METRIC euclidean"
+
+  """
+  @spec define_vector_index(String.t(), String.t(), String.t(), pos_integer(), keyword()) ::
+          String.t()
+  def define_vector_index(table, name, field, dimension, opts \\ [])
+      when is_integer(dimension) and dimension > 0 do
+    base =
+      "DEFINE VECTOR INDEX #{name} ON TABLE #{table} FIELDS #{field} DIMENSION #{dimension}"
+
+    case Keyword.get(opts, :metric) do
+      nil -> base
+      "" -> base
+      metric -> "#{base} METRIC #{metric}"
+    end
+  end
+
+  @doc """
+  Builds a `SEARCH` statement: a BM25 full-text query against a `field` that
+  has a full-text index. Results come back as rows ranked best-first, each
+  carrying an extra `score` field.
+
+  ## Options
+
+    * `:limit` - maximum number of hits to return
+
+  ## Examples
+
+      iex> Dllb.Query.search("article", "body", "graph database")
+      "SEARCH article body 'graph database'"
+
+      iex> Dllb.Query.search("article", "body", "graph database", limit: 5)
+      "SEARCH article body 'graph database' LIMIT 5"
+
+  """
+  @spec search(String.t(), String.t(), String.t(), keyword()) :: String.t()
+  def search(table, field, query, opts \\ []) when is_binary(query) do
+    base = "SEARCH #{table} #{field} #{escape_value(query)}"
+    maybe_append_limit(base, Keyword.get(opts, :limit))
+  end
+
+  @doc """
+  Builds a `VECTOR SEARCH` statement: an approximate nearest-neighbour query
+  against a `field` that has a vector index. `vector` is the query embedding
+  (a list of numbers). Results come back as rows ordered nearest-first, each
+  carrying an extra `distance` field.
+
+  ## Options
+
+    * `:k` - number of nearest neighbours to return
+
+  ## Examples
+
+      iex> Dllb.Query.vector_search("doc", "embedding", [0.1, 0.2, 0.3])
+      "VECTOR SEARCH doc embedding [0.1, 0.2, 0.3]"
+
+      iex> Dllb.Query.vector_search("doc", "embedding", [0.1, 0.2, 0.3], k: 5)
+      "VECTOR SEARCH doc embedding [0.1, 0.2, 0.3] K 5"
+
+  """
+  @spec vector_search(String.t(), String.t(), [number()], keyword()) :: String.t()
+  def vector_search(table, field, vector, opts \\ []) when is_list(vector) do
+    base = "VECTOR SEARCH #{table} #{field} #{escape_value(vector)}"
+    maybe_append_int(base, "K", Keyword.get(opts, :k))
   end
 
   @doc """

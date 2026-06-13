@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-13
+
+Adds client support for the engine's full-text (Tantivy/BM25) and vector
+(HNSW) index creation and search, now wired into the query layer.
+
+### Added
+
+- `Dllb.Query.define_fulltext_index/4` builds
+  `DEFINE FULLTEXT INDEX <name> ON TABLE <table> FIELDS <field> [ANALYZER <a>]`,
+  with an optional `:analyzer` (`default`, `simple`, or a language).
+- `Dllb.Query.define_vector_index/5` builds
+  `DEFINE VECTOR INDEX <name> ON TABLE <table> FIELDS <field> DIMENSION <n> [METRIC <m>]`,
+  with an optional `:metric` (`cosine`, `euclidean`/`l2`, or `dot`).
+- `Dllb.Query.search/4` builds `SEARCH <table> <field> '<query>' [LIMIT n]`
+  (BM25 full-text). Results are rows ranked best-first, each with a `score`.
+- `Dllb.Query.vector_search/4` builds
+  `VECTOR SEARCH <table> <field> [v, ...] [K n]` (approximate KNN). Results are
+  rows ordered nearest-first, each with a `distance`.
+- `Dllb.Schema.ast_node_search_indexes/0` defines the full-text indexes on
+  `source_text`/`docstring` and the vector indexes on
+  `source_embedding` (768, cosine) / `structure_embedding` (384, cosine).
+
+### Changed
+
+- `Dllb.Schema.all_statements/0` now also emits the full-text and vector
+  search index definitions, so `bootstrap/1` provisions them. These require a
+  dllb server with search services enabled (the default server build).
+
 ## [0.5.0] - 2026-06-13
 
 Synchronizes the client with the dllb engine's persisted secondary-index

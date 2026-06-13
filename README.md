@@ -20,6 +20,7 @@ on data rather than sockets.
 - **Query builder**—Composable functions for CREATE, SELECT, UPDATE, DELETE, RELATE, COUNT, upsert (`ON CONFLICT UPDATE [SET ...]`), DEFINE TABLE/FIELD, and DEFINE/REMOVE INDEX statements.
 - **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `Rows`, `Count`, `Update`, `Batch`, `Communities`, `Components`, `Error`) parsed from server responses.
 - **Secondary indexes**—Persisted single- and multi-field (composite) index definitions with optional `UNIQUE` constraints. Equality and range filters on indexed fields are transparently accelerated by the engine.
+- **Full-text & vector search**—`DEFINE FULLTEXT INDEX` (BM25/Tantivy) and `DEFINE VECTOR INDEX` (HNSW) creation, plus `SEARCH` and `VECTOR SEARCH` query builders.
 - **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion.
 - **Schema bootstrap**—Declarative schema definitions executed through any query function.
 - **OTP-ready**—Application supervision tree with opt-in pool startup via `config :dllb, enabled: true`.
@@ -108,8 +109,33 @@ Once an index exists, no query changes are required: `SELECT`, `COUNT`, and
 `UPDATE` statements whose `WHERE` clause has equality or range predicates on
 indexed fields are accelerated automatically.
 
-> Vector (HNSW) and full-text index creation are not part of the engine's
-> query protocol, so they cannot be defined over the wire.
+### Full-text and vector search
+
+Full-text (BM25) and vector (HNSW) indexes are created over the wire and
+queried with the `SEARCH` and `VECTOR SEARCH` verbs. Both require a dllb
+server with search services enabled (the default server build).
+
+```elixir
+# Define a full-text index (optionally with a language analyzer).
+Dllb.Query.define_fulltext_index("article", "ft_body", "body", analyzer: "english")
+# => "DEFINE FULLTEXT INDEX ft_body ON TABLE article FIELDS body ANALYZER english"
+
+# BM25 search; each row carries a "score" field, best-first.
+Dllb.Query.search("article", "body", "graph database", limit: 5)
+# => "SEARCH article body 'graph database' LIMIT 5"
+
+# Define a vector (HNSW) index over a dense embedding field.
+Dllb.Query.define_vector_index("ast_node", "vec_src", "source_embedding", 768, metric: "cosine")
+# => "DEFINE VECTOR INDEX vec_src ON TABLE ast_node FIELDS source_embedding DIMENSION 768 METRIC cosine"
+
+# Approximate nearest-neighbour search; each row carries a "distance" field.
+Dllb.Query.vector_search("ast_node", "source_embedding", [0.12, 0.07, 0.91], k: 10)
+# => "VECTOR SEARCH ast_node source_embedding [0.12, 0.07, 0.91] K 10"
+```
+
+Valid analyzers: `default`, `simple`, `english`, `spanish`, `french`,
+`german`, `italian`, `portuguese`, `russian`. Valid metrics: `cosine`,
+`euclidean` (alias `l2`), `dot` (alias `dotproduct`/`dot_product`).
 
 ### Upserts
 
