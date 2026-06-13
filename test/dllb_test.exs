@@ -461,6 +461,40 @@ defmodule DllbTest do
       assert doc.kind == "container"
     end
 
+    test "to_dllb_document names a variable after its identifier" do
+      node = {:variable, [scope: :local, line: 3], "user_id"}
+      ctx = %{language: :elixir, file_path: "lib/p.ex"}
+
+      doc = Dllb.MetaAST.to_dllb_document(node, ctx)
+      assert doc.name == "user_id"
+      assert doc.kind == "variable"
+    end
+
+    test "to_dllb_document names an operator after its symbol" do
+      node = {:binary_op, [category: :arithmetic, operator: :+, line: 4], []}
+      ctx = %{language: :elixir, file_path: "lib/p.ex"}
+
+      assert Dllb.MetaAST.to_dllb_document(node, ctx).name == "+"
+    end
+
+    test "to_dllb_document falls back to the node-type label for unnamed nodes" do
+      node = {:tuple, [line: 2], [{:literal, [subtype: :integer], 1}]}
+      ctx = %{language: :elixir, file_path: "lib/p.ex"}
+
+      assert Dllb.MetaAST.to_dllb_document(node, ctx).name == "tuple"
+    end
+
+    test "to_dllb_document coerces a non-scalar :name to a scalar string" do
+      # Regression: Metastatic occasionally hands back a list-wrapped name for
+      # a serialized child expression; it must never be stored as %{"Array"...}.
+      node = {:tuple, [name: ["{:tuple, [line: 1048], [...]}"], line: 5], []}
+      ctx = %{language: :elixir, file_path: "lib/p.ex"}
+
+      name = Dllb.MetaAST.to_dllb_document(node, ctx).name
+      assert is_binary(name)
+      assert name == "tuple"
+    end
+
     test "from_dllb_row converts string-keyed map to atom-keyed" do
       row = %{
         "name" => "parse",

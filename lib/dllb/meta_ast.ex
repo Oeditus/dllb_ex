@@ -70,7 +70,7 @@ defmodule Dllb.MetaAST do
 
     %{
       kind: NodeTypes.to_dllb_kind(type_atom),
-      name: name,
+      name: sensible_name(name, type_atom, children_or_value, meta),
       language: to_string(context.language),
       file_path: context.file_path,
       module: module,
@@ -99,6 +99,45 @@ defmodule Dllb.MetaAST do
         {fallback_module, name}
     end
   end
+
+  # Produces a clean, scalar string name for the stored document.
+  #
+  # Metastatic only sets a `:name` for nodes with an obvious identifier
+  # (functions, modules, calls). For other node types `:name` is absent -- and
+  # in rare cases it is a non-scalar (e.g. a list wrapping a serialized child
+  # expression) that would otherwise be stored verbatim as an
+  # `%{"Array" => ...}` and break every consumer that expects a string.
+  #
+  # We always return a scalar string so structural nodes get a sensible,
+  # queryable name instead of being dropped or corrupted:
+  #
+  #   * a clean scalar `:name` is used as-is
+  #   * variables fall back to their identifier (the leaf value)
+  #   * operators fall back to the operator symbol
+  #   * everything else falls back to the node-type label ("tuple", "block", ...)
+  defp sensible_name(name, _type, _value, _meta) when is_binary(name) and name != "", do: name
+
+  defp sensible_name(name, _type, _value, _meta) when is_atom(name) and not is_nil(name),
+    do: Atom.to_string(name)
+
+  defp sensible_name(name, _type, _value, _meta) when is_number(name), do: to_string(name)
+
+  defp sensible_name(_name, :variable, value, _meta) when is_binary(value) and value != "",
+    do: value
+
+  defp sensible_name(_name, :variable, value, _meta) when is_atom(value) and not is_nil(value),
+    do: Atom.to_string(value)
+
+  defp sensible_name(_name, type, _value, meta) when type in [:binary_op, :unary_op] do
+    case Keyword.get(meta, :operator) do
+      nil -> Atom.to_string(type)
+      operator -> to_string(operator)
+    end
+  end
+
+  # `type` is always a node-type atom here (see `walk_tree/4`), so this is the
+  # catch-all: structural nodes are labelled by their type.
+  defp sensible_name(_name, type, _value, _meta), do: Atom.to_string(type)
 
   @doc """
   Walks a full MetaAST tree and extracts structural relationship edges.
