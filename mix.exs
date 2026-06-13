@@ -1,7 +1,7 @@
 defmodule Dllb.MixProject do
   use Mix.Project
 
-  @version "0.4.0"
+  @version "0.5.0"
   @source_url "https://github.com/Oeditus/dllb_ex"
 
   def project do
@@ -68,7 +68,7 @@ defmodule Dllb.MixProject do
       logo: "logo-48x48.png",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md"],
+      extras: ["README.md", "CHANGELOG.md"],
       groups_for_modules: [
         "Query & Results": [Dllb.Query, Dllb.Result],
         Connection: [Dllb.Connection, Dllb.Pool, Dllb.Protocol],
@@ -82,7 +82,7 @@ defmodule Dllb.MixProject do
       name: "dllb",
       licenses: ["MIT"],
       maintainers: ["Aleksei Matiushkin"],
-      files: ~w(lib mix.exs README.md LICENSE logo-48x48.png logo-128x128.png),
+      files: ~w(lib mix.exs README.md CHANGELOG.md LICENSE logo-48x48.png logo-128x128.png),
       links: %{
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"

@@ -153,20 +153,34 @@ defmodule Dllb.Query do
   end
 
   @doc """
-  Builds a CREATE ... ON CONFLICT UPDATE statement for idempotent upserts.
+  Builds a `CREATE ... ON CONFLICT UPDATE` statement for idempotent upserts.
 
-  If the record already exists (by table + id), updates the fields instead
-  of failing.
+  If the record already exists (by table + id), the conflict is resolved by
+  updating it instead of failing:
+
+    * with no `update_fields` (or an empty map), the engine merges the same
+      `fields` from the CREATE into the existing record (`ON CONFLICT UPDATE`);
+    * with a non-empty `update_fields` map, the engine applies those explicit
+      fields to the existing record instead (`ON CONFLICT UPDATE SET ...`).
 
   ## Examples
 
       iex> Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30})
       "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE"
 
+      iex> Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30}, %{age: 31})
+      "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE SET age = 31"
+
   """
-  @spec upsert(String.t(), String.t(), fields()) :: String.t()
-  def upsert(table, id, fields) when is_map(fields) do
-    "CREATE #{table}:#{id} SET #{set_clause(fields)} ON CONFLICT UPDATE"
+  @spec upsert(String.t(), String.t(), fields(), fields()) :: String.t()
+  def upsert(table, id, fields, update_fields \\ %{})
+      when is_map(fields) and is_map(update_fields) do
+    base = "CREATE #{table}:#{id} SET #{set_clause(fields)} ON CONFLICT UPDATE"
+
+    case map_size(update_fields) do
+      0 -> base
+      _ -> "#{base} SET #{set_clause(update_fields)}"
+    end
   end
 
   @doc """
@@ -230,40 +244,58 @@ defmodule Dllb.Query do
   end
 
   @doc """
-  Builds a DEFINE INDEX statement.
+  Builds a `DEFINE INDEX` statement that registers a persisted secondary
+  index in the engine's catalog and backfills entries for existing rows.
 
-  Supported index types: `:btree`, `:fulltext`, `:hnsw`.
+  The index covers one or more `fields`. Composite (multi-field) indexes are
+  matched by the engine using leftmost-prefix planning, so list the most
+  selective leading field first. Once defined, equality and range
+  (`>`, `>=`, `<`, `<=`) predicates on the indexed fields are transparently
+  accelerated in `SELECT`/`COUNT`/`UPDATE` `WHERE` clauses — no change to the
+  query strings is required.
 
-  ## Options (for HNSW vector indexes)
+  ## Options
 
-    * `:dimension` - vector dimension
-    * `:dist` - distance metric (e.g. `"COSINE"`, `"EUCLIDEAN"`)
+    * `:unique` - when `true`, enforces uniqueness over the full indexed
+      tuple; defining the index fails if existing rows already hold duplicate
+      values (default `false`)
 
   ## Examples
 
-      iex> Dllb.Query.define_index("user", "idx_name", ["name"], :btree)
-      "DEFINE INDEX idx_name ON user FIELDS name SEARCH ANALYZER btree"
+      iex> Dllb.Query.define_index("user", "by_age", ["age"])
+      "DEFINE INDEX by_age ON TABLE user FIELDS age"
 
-      iex> Dllb.Query.define_index("ast_node", "idx_src_embed", ["source_embedding"], :hnsw, dimension: 768, dist: "COSINE")
-      "DEFINE INDEX idx_src_embed ON ast_node FIELDS source_embedding HNSW DIMENSION 768 DIST COSINE"
+      iex> Dllb.Query.define_index("user", "by_email", ["email"], unique: true)
+      "DEFINE INDEX by_email ON TABLE user FIELDS email UNIQUE"
+
+      iex> Dllb.Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"])
+      "DEFINE INDEX idx_file_kind ON TABLE ast_node FIELDS file_path, kind"
 
   """
-  @spec define_index(String.t(), String.t(), [String.t()], atom(), keyword()) :: String.t()
-  def define_index(table, name, fields, index_type, opts \\ [])
+  @spec define_index(String.t(), String.t(), [String.t()], keyword()) :: String.t()
+  def define_index(table, name, fields, opts \\ []) when is_list(fields) do
+    base = "DEFINE INDEX #{name} ON TABLE #{table} FIELDS #{Enum.join(fields, ", ")}"
 
-  def define_index(table, name, fields, :btree, _opts) do
-    "DEFINE INDEX #{name} ON #{table} FIELDS #{Enum.join(fields, ", ")} SEARCH ANALYZER btree"
+    if Keyword.get(opts, :unique, false) do
+      "#{base} UNIQUE"
+    else
+      base
+    end
   end
 
-  def define_index(table, name, fields, :fulltext, _opts) do
-    "DEFINE INDEX #{name} ON #{table} FIELDS #{Enum.join(fields, ", ")} SEARCH ANALYZER fulltext"
-  end
+  @doc """
+  Builds a `REMOVE INDEX` statement that drops a secondary index and all of
+  its catalog entries. Subsequent queries fall back to full scans.
 
-  def define_index(table, name, fields, :hnsw, opts) do
-    dimension = Keyword.fetch!(opts, :dimension)
-    dist = Keyword.fetch!(opts, :dist)
+  ## Examples
 
-    "DEFINE INDEX #{name} ON #{table} FIELDS #{Enum.join(fields, ", ")} HNSW DIMENSION #{dimension} DIST #{dist}"
+      iex> Dllb.Query.remove_index("user", "by_age")
+      "REMOVE INDEX by_age ON TABLE user"
+
+  """
+  @spec remove_index(String.t(), String.t()) :: String.t()
+  def remove_index(table, name) do
+    "REMOVE INDEX #{name} ON TABLE #{table}"
   end
 
   @doc """

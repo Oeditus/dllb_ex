@@ -81,39 +81,34 @@ defmodule Dllb.Schema do
   end
 
   @doc """
-  Returns the list of query strings to define all indexes on the `ast_node` table.
+  Returns the list of query strings that define the secondary indexes on the
+  `ast_node` table.
 
-  Indexes:
-    - `idx_kind` - btree on `kind`
-    - `idx_language` - btree on `language`
-    - `idx_file_path` - btree on `file_path`
-    - `idx_module` - btree on `module`
-    - `idx_project_path` - btree on `project_path`
-    - `idx_file_kind` - btree on `file_path, kind` (composite)
-    - `idx_source_embedding` - HNSW 768-dim COSINE on `source_embedding`
-    - `idx_structure_embedding` - HNSW 384-dim COSINE on `structure_embedding`
-    - `idx_source_text` - fulltext on `source_text`
-    - `idx_docstring` - fulltext on `docstring`
+  These are persisted in the engine's index catalog and transparently
+  accelerate equality and range predicates in `WHERE` clauses:
+
+    - `idx_kind` on `kind`
+    - `idx_language` on `language`
+    - `idx_file_path` on `file_path`
+    - `idx_module` on `module`
+    - `idx_project_path` on `project_path`
+    - `idx_file_kind` composite on `file_path, kind` (leftmost-prefix)
+
+  Vector (HNSW) and full-text indexes are intentionally omitted: the engine's
+  query protocol defines only plain secondary indexes, so those cannot be
+  created over the wire. The `source_embedding`, `structure_embedding`,
+  `source_text`, and `docstring` fields are still stored as ordinary document
+  fields.
   """
   @spec ast_node_indexes() :: [String.t()]
   def ast_node_indexes do
     [
-      Query.define_index("ast_node", "idx_kind", ["kind"], :btree),
-      Query.define_index("ast_node", "idx_language", ["language"], :btree),
-      Query.define_index("ast_node", "idx_file_path", ["file_path"], :btree),
-      Query.define_index("ast_node", "idx_module", ["module"], :btree),
-      Query.define_index("ast_node", "idx_project_path", ["project_path"], :btree),
-      Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"], :btree),
-      Query.define_index("ast_node", "idx_source_embedding", ["source_embedding"], :hnsw,
-        dimension: 768,
-        dist: "COSINE"
-      ),
-      Query.define_index("ast_node", "idx_structure_embedding", ["structure_embedding"], :hnsw,
-        dimension: 384,
-        dist: "COSINE"
-      ),
-      Query.define_index("ast_node", "idx_source_text", ["source_text"], :fulltext),
-      Query.define_index("ast_node", "idx_docstring", ["docstring"], :fulltext)
+      Query.define_index("ast_node", "idx_kind", ["kind"]),
+      Query.define_index("ast_node", "idx_language", ["language"]),
+      Query.define_index("ast_node", "idx_file_path", ["file_path"]),
+      Query.define_index("ast_node", "idx_module", ["module"]),
+      Query.define_index("ast_node", "idx_project_path", ["project_path"]),
+      Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"])
     ]
   end
 

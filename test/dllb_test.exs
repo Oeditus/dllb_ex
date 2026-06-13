@@ -80,6 +80,35 @@ defmodule DllbTest do
                "DEFINE TABLE ast_node SCHEMAFULL"
     end
 
+    test "define_index builds secondary index DDL" do
+      assert Dllb.Query.define_index("user", "by_age", ["age"]) ==
+               "DEFINE INDEX by_age ON TABLE user FIELDS age"
+    end
+
+    test "define_index supports composite (multi-field) indexes" do
+      assert Dllb.Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"]) ==
+               "DEFINE INDEX idx_file_kind ON TABLE ast_node FIELDS file_path, kind"
+    end
+
+    test "define_index supports the unique option" do
+      assert Dllb.Query.define_index("user", "by_email", ["email"], unique: true) ==
+               "DEFINE INDEX by_email ON TABLE user FIELDS email UNIQUE"
+    end
+
+    test "remove_index builds REMOVE INDEX DDL" do
+      assert Dllb.Query.remove_index("user", "by_age") == "REMOVE INDEX by_age ON TABLE user"
+    end
+
+    test "upsert builds CREATE ... ON CONFLICT UPDATE" do
+      assert Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30}) ==
+               "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE"
+    end
+
+    test "upsert with explicit update fields builds ON CONFLICT UPDATE SET" do
+      assert Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30}, %{age: 31}) ==
+               "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE SET age = 31"
+    end
+
     test "raw passthrough" do
       assert Dllb.Query.raw("SELECT * FROM foo") == "SELECT * FROM foo"
     end
@@ -241,6 +270,14 @@ defmodule DllbTest do
                joined =~ "DEFINE FIELD kind ON ast_node"
 
       assert joined =~ "DEFINE INDEX"
+    end
+
+    test "ast_node_indexes uses secondary-index DDL without HNSW/fulltext" do
+      idx = Enum.join(Dllb.Schema.ast_node_indexes(), " ")
+      assert idx =~ "DEFINE INDEX idx_file_kind ON TABLE ast_node FIELDS file_path, kind"
+      refute idx =~ "HNSW"
+      refute idx =~ "SEARCH ANALYZER"
+      refute idx =~ "fulltext"
     end
 
     test "bootstrap executes all statements" do

@@ -17,9 +17,9 @@ on data rather than sockets.
 
 - **Connection pooling**—NimblePool-managed TCP sockets with automatic reconnection on dead connections.
 - **Wire protocol**—Line-based text over TCP; supports JSON, toon, and CSV response formats.
-- **Query builder**—Composable functions for CREATE, SELECT, UPDATE, DELETE, RELATE, DEFINE TABLE/FIELD/INDEX statements.
-- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `Rows`, `Error`) parsed from server responses.
-- **Vector index support**—HNSW index definitions with configurable dimension and distance metric.
+- **Query builder**—Composable functions for CREATE, SELECT, UPDATE, DELETE, RELATE, COUNT, upsert (`ON CONFLICT UPDATE [SET ...]`), DEFINE TABLE/FIELD, and DEFINE/REMOVE INDEX statements.
+- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `Rows`, `Count`, `Update`, `Batch`, `Communities`, `Components`, `Error`) parsed from server responses.
+- **Secondary indexes**—Persisted single- and multi-field (composite) index definitions with optional `UNIQUE` constraints. Equality and range filters on indexed fields are transparently accelerated by the engine.
 - **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion.
 - **Schema bootstrap**—Declarative schema definitions executed through any query function.
 - **OTP-ready**—Application supervision tree with opt-in pool startup via `config :dllb, enabled: true`.
@@ -77,11 +77,50 @@ result = Dllb.query!("SELECT * FROM users WHERE age > 25")
 Dllb.Query.create("user", %{name: "Alice", age: 30})
 # => "CREATE user SET age = 30, name = 'Alice'"
 
-Dllb.Query.select("user", where: "age > 25", order: "name ASC", limit: 10)
-# => "SELECT * FROM user WHERE age > 25 ORDER BY name ASC LIMIT 10"
+Dllb.Query.select("user", where: "age > 25", limit: 10)
+# => "SELECT * FROM user WHERE age > 25 LIMIT 10"
 
 Dllb.Query.relate("user:a", "follows", "user:b", %{since: "2024"})
 # => "RELATE user:a->follows->user:b SET since = '2024'"
+```
+
+### Secondary indexes
+
+```elixir
+# Single-field secondary index.
+Dllb.Query.define_index("user", "by_age", ["age"])
+# => "DEFINE INDEX by_age ON TABLE user FIELDS age"
+
+# Composite index (leftmost-prefix planning: list the leading field first).
+Dllb.Query.define_index("ast_node", "idx_file_kind", ["file_path", "kind"])
+# => "DEFINE INDEX idx_file_kind ON TABLE ast_node FIELDS file_path, kind"
+
+# Unique constraint over the full indexed tuple.
+Dllb.Query.define_index("user", "by_email", ["email"], unique: true)
+# => "DEFINE INDEX by_email ON TABLE user FIELDS email UNIQUE"
+
+# Drop an index (queries then fall back to full scans).
+Dllb.Query.remove_index("user", "by_age")
+# => "REMOVE INDEX by_age ON TABLE user"
+```
+
+Once an index exists, no query changes are required: `SELECT`, `COUNT`, and
+`UPDATE` statements whose `WHERE` clause has equality or range predicates on
+indexed fields are accelerated automatically.
+
+> Vector (HNSW) and full-text index creation are not part of the engine's
+> query protocol, so they cannot be defined over the wire.
+
+### Upserts
+
+```elixir
+# Insert, or merge the same fields on conflict.
+Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30})
+# => "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE"
+
+# Insert, or apply explicit fields on conflict.
+Dllb.Query.upsert("user", "u1", %{name: "Alice", age: 30}, %{age: 31})
+# => "CREATE user:u1 SET age = 30, name = 'Alice' ON CONFLICT UPDATE SET age = 31"
 ```
 
 ### Schema bootstrap
