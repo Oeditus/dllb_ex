@@ -653,6 +653,58 @@ defmodule Dllb.Query do
     maybe_append("GRAPH EDGES #{edge_table}", "WHERE", Keyword.get(opts, :where))
   end
 
+  # ---------------------------------------------------------------------------
+  # HNSW snapshot / persistence commands
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Builds a `VECTOR SNAPSHOT <index_name>` statement that triggers the server
+  to serialize the in-memory HNSW index to persistent storage.
+
+  The snapshot is atomic — readers are not blocked. On restart, the server
+  reloads from the latest snapshot rather than rebuilding from scratch.
+
+  ## Examples
+
+      iex> Dllb.Query.vector_snapshot("vec_src")
+      "VECTOR SNAPSHOT vec_src"
+
+  """
+  @spec vector_snapshot(String.t()) :: String.t()
+  def vector_snapshot(index_name) do
+    "VECTOR SNAPSHOT #{index_name}"
+  end
+
+  @doc """
+  Builds a `VECTOR RESTORE <index_name>` statement that triggers the server
+  to reload the HNSW index from its latest persisted snapshot.
+
+  ## Examples
+
+      iex> Dllb.Query.vector_restore("vec_src")
+      "VECTOR RESTORE vec_src"
+
+  """
+  @spec vector_restore(String.t()) :: String.t()
+  def vector_restore(index_name) do
+    "VECTOR RESTORE #{index_name}"
+  end
+
+  @doc """
+  Builds a `VECTOR INFO <index_name>` statement that returns metadata about
+  the HNSW index: node count, layer distribution, snapshot size, config.
+
+  ## Examples
+
+      iex> Dllb.Query.vector_info("vec_src")
+      "VECTOR INFO vec_src"
+
+  """
+  @spec vector_info(String.t()) :: String.t()
+  def vector_info(index_name) do
+    "VECTOR INFO #{index_name}"
+  end
+
   @doc """
   Passes through a raw query string without modification.
 

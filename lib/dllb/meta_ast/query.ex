@@ -217,6 +217,88 @@ defmodule Dllb.MetaAST.Query do
   end
 
   # ---------------------------------------------------------------------------
+  # Structural similarity queries (server-side vector search)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Find structurally similar AST nodes using `structure_embedding` vector search.
+
+  Requires a vector index on `structure_embedding` and that structure embeddings
+  have been generated (via `Dllb.MetaAST.Similarity.subtree_hash/1` or a
+  learned embedding).
+
+  ## Options
+
+    * `:limit` - max results (default 10)
+    * `:kind` / `:file_path` / `:language` / `:project_path` - scope filters
+  """
+  @spec structurally_similar_to([number()], keyword()) :: String.t()
+  def structurally_similar_to(structure_embedding, opts \\ []) do
+    k = Keyword.get(opts, :limit, 10)
+
+    Query.vector_search(@table, "structure_embedding", structure_embedding,
+      where: scope_where(opts),
+      k: k
+    )
+  end
+
+  @doc """
+  Sets the structure embedding for AST nodes matching the given attributes.
+
+  `attrs` is a map of column => value used to identify the target rows.
+  """
+  @spec set_structure_embedding(map(), [number()]) :: String.t()
+  def set_structure_embedding(attrs, embedding) when is_map(attrs) and is_list(embedding) do
+    where =
+      attrs
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Enum.sort_by(fn {k, _v} -> to_string(k) end)
+      |> Enum.map_join(" AND ", fn {k, v} -> "#{k} = #{escape_attr(v)}" end)
+
+    Query.update_where(@table, %{structure_embedding: embedding}, where)
+  end
+
+  # ---------------------------------------------------------------------------
+  # HNSW snapshot commands
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Trigger a snapshot of the source embedding HNSW index to persistent storage.
+  """
+  @spec snapshot_source_index() :: String.t()
+  def snapshot_source_index, do: Query.vector_snapshot("vec_source_embedding")
+
+  @doc """
+  Trigger a snapshot of the structure embedding HNSW index to persistent storage.
+  """
+  @spec snapshot_structure_index() :: String.t()
+  def snapshot_structure_index, do: Query.vector_snapshot("vec_structure_embedding")
+
+  @doc """
+  Restore the source embedding HNSW index from its latest snapshot.
+  """
+  @spec restore_source_index() :: String.t()
+  def restore_source_index, do: Query.vector_restore("vec_source_embedding")
+
+  @doc """
+  Restore the structure embedding HNSW index from its latest snapshot.
+  """
+  @spec restore_structure_index() :: String.t()
+  def restore_structure_index, do: Query.vector_restore("vec_structure_embedding")
+
+  @doc """
+  Get info about the source embedding HNSW index.
+  """
+  @spec source_index_info() :: String.t()
+  def source_index_info, do: Query.vector_info("vec_source_embedding")
+
+  @doc """
+  Get info about the structure embedding HNSW index.
+  """
+  @spec structure_index_info() :: String.t()
+  def structure_index_info, do: Query.vector_info("vec_structure_embedding")
+
+  # ---------------------------------------------------------------------------
   # Lifecycle queries
   # ---------------------------------------------------------------------------
 
