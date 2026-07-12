@@ -53,6 +53,7 @@ defmodule Dllb.MixProject do
     [
       {:nimble_pool, "~> 1.1"},
       {:metastatic, "~> 0.22", optional: true},
+      {:telemetry, "~> 1.0"},
 
       # Dev / Test
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},

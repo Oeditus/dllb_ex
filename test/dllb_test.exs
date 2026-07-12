@@ -509,4 +509,44 @@ defmodule DllbTest do
       assert result.line_start == 5
     end
   end
+
+  describe "Dllb.Pool" do
+    test "init_worker handles connection failure gracefully" do
+      opts = [host: "127.0.0.1", port: 29_999, timeout: 10]
+      assert {:ok, {:disconnected, conn_opts}, ^opts} = Dllb.Pool.init_worker(opts)
+      assert Keyword.get(conn_opts, :port) == 29_999
+    end
+
+    test "handle_checkout tries to reconnect and returns reply on failure" do
+      opts = [host: "127.0.0.1", port: 29_999, timeout: 10]
+      state = {:disconnected, opts}
+      assert {:reply, {:error, :closed}, ^state, ^opts} = Dllb.Pool.handle_checkout(:checkout, self(), state, opts)
+    end
+
+    test "telemetry events are emitted on query" do
+      test_pid = self()
+      handler_id = "test-dllb-telemetry"
+
+      :telemetry.attach_many(
+        handler_id,
+        [
+          [:dllb, :query, :start],
+          [:dllb, :query, :exception]
+        ],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      try do
+        assert {:error, {:pool_error, _}} = Dllb.Pool.query("SELECT 1")
+
+        assert_receive {:telemetry, [:dllb, :query, :start], %{system_time: _}, %{query: "SELECT 1"}}
+        assert_receive {:telemetry, [:dllb, :query, :exception], %{duration: _}, %{query: "SELECT 1", kind: :exit}}
+      after
+        :telemetry.detach(handler_id)
+      end
+    end
+  end
 end

@@ -145,7 +145,10 @@ defmodule Dllb.Schema do
   @spec edge_idx_table() :: [String.t()]
   def edge_idx_table do
     [
-      Query.define_table("_edge_idx", :schemaless)
+      Query.define_table("_edge_idx", :schemaless),
+      Query.define_index("_edge_idx", "idx_edge_type", ["edge_type"]),
+      Query.define_index("_edge_idx", "idx_from_id", ["from_id"]),
+      Query.define_index("_edge_idx", "idx_to_id", ["to_id"])
     ]
   end
 

@@ -107,16 +107,18 @@ defmodule Dllb.MetaAST.Similarity do
   def find_clones(nodes, opts \\ []) do
     threshold = Keyword.get(opts, :threshold, 0.8)
     fingerprints = Enum.map(nodes, &tree_fingerprint/1)
+    fingerprints_tuple = List.to_tuple(fingerprints)
+    nodes_tuple = List.to_tuple(nodes)
 
     nodes
     |> Enum.with_index()
     |> pairs()
     |> Enum.reduce([], fn {{_node_a, i}, {_node_b, j}}, acc ->
-      fp_a = Enum.at(fingerprints, i)
-      fp_b = Enum.at(fingerprints, j)
+      fp_a = elem(fingerprints_tuple, i)
+      fp_b = elem(fingerprints_tuple, j)
 
       if should_compare?(fp_a, fp_b) do
-        sim = structural_similarity(Enum.at(nodes, i), Enum.at(nodes, j))
+        sim = structural_similarity(elem(nodes_tuple, i), elem(nodes_tuple, j))
 
         if sim >= threshold do
           [%{index_a: i, index_b: j, similarity: sim} | acc]
@@ -151,13 +153,12 @@ defmodule Dllb.MetaAST.Similarity do
 
     smaller_sizes = Enum.map(smaller, &subtree_size/1)
     larger_sizes = Enum.map(larger, &subtree_size/1)
+    larger_sizes_tuple = List.to_tuple(larger_sizes)
 
     {total_weighted_sim, total_weight, used} =
       smaller
-      |> Enum.with_index()
-      |> Enum.reduce({0.0, 0.0, MapSet.new()}, fn {s_child, i}, {tw_sim, tw, used} ->
-        s_size = Enum.at(smaller_sizes, i)
-
+      |> Enum.zip(smaller_sizes)
+      |> Enum.reduce({0.0, 0.0, MapSet.new()}, fn {s_child, s_size}, {tw_sim, tw, used} ->
         {best_sim, best_j} =
           larger
           |> Enum.with_index()
@@ -167,7 +168,7 @@ defmodule Dllb.MetaAST.Similarity do
             if sim > best, do: {sim, j}, else: {best, best_idx}
           end)
 
-        l_size = if best_j, do: Enum.at(larger_sizes, best_j), else: 0
+        l_size = if best_j, do: elem(larger_sizes_tuple, best_j), else: 0
         weight = (s_size + l_size) / 2.0
         new_used = if best_j, do: MapSet.put(used, best_j), else: used
 
