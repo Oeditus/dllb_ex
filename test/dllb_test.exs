@@ -520,7 +520,9 @@ defmodule DllbTest do
     test "handle_checkout tries to reconnect and returns reply on failure" do
       opts = [host: "127.0.0.1", port: 29_999, timeout: 10]
       state = {:disconnected, opts}
-      assert {:reply, {:error, :closed}, ^state, ^opts} = Dllb.Pool.handle_checkout(:checkout, self(), state, opts)
+
+      assert {:reply, {:error, :closed}, ^state, ^opts} =
+               Dllb.Pool.handle_checkout(:checkout, self(), state, opts)
     end
 
     test "telemetry events are emitted on query" do
@@ -542,8 +544,11 @@ defmodule DllbTest do
       try do
         assert {:error, {:pool_error, _}} = Dllb.Pool.query("SELECT 1")
 
-        assert_receive {:telemetry, [:dllb, :query, :start], %{system_time: _}, %{query: "SELECT 1"}}
-        assert_receive {:telemetry, [:dllb, :query, :exception], %{duration: _}, %{query: "SELECT 1", kind: :exit}}
+        assert_receive {:telemetry, [:dllb, :query, :start], %{system_time: _},
+                        %{query: "SELECT 1"}}
+
+        assert_receive {:telemetry, [:dllb, :query, :exception], %{duration: _},
+                        %{query: "SELECT 1", kind: :exit}}
       after
         :telemetry.detach(handler_id)
       end

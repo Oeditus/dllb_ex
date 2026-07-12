@@ -197,12 +197,21 @@ defmodule Dllb.Pool do
 
   defp with_telemetry(event, metadata, fun) do
     start_time = System.monotonic_time()
-    :ok = :telemetry.execute([:dllb, event, :start], %{system_time: System.system_time()}, metadata)
+
+    :ok =
+      :telemetry.execute([:dllb, event, :start], %{system_time: System.system_time()}, metadata)
 
     try do
       result = fun.()
       duration = System.monotonic_time() - start_time
-      :ok = :telemetry.execute([:dllb, event, :stop], %{duration: duration}, Map.put(metadata, :result, result))
+
+      :ok =
+        :telemetry.execute(
+          [:dllb, event, :stop],
+          %{duration: duration},
+          Map.put(metadata, :result, result)
+        )
+
       result
     catch
       kind, reason ->
@@ -215,7 +224,13 @@ defmodule Dllb.Pool do
           |> Map.put(:reason, reason)
           |> Map.put(:stacktrace, stacktrace)
 
-        :ok = :telemetry.execute([:dllb, event, :exception], %{duration: duration}, exception_metadata)
+        :ok =
+          :telemetry.execute(
+            [:dllb, event, :exception],
+            %{duration: duration},
+            exception_metadata
+          )
+
         :erlang.raise(kind, reason, stacktrace)
     end
   end
