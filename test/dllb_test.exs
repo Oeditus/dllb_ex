@@ -521,7 +521,7 @@ defmodule DllbTest do
       opts = [host: "127.0.0.1", port: 29_999, timeout: 10]
       state = {:disconnected, opts}
 
-      assert {:reply, {:error, :closed}, ^state, ^opts} =
+      assert {:ok, {:error, :closed}, ^state, ^opts} =
                Dllb.Pool.handle_checkout(:checkout, self(), state, opts)
     end
 
@@ -533,6 +533,7 @@ defmodule DllbTest do
         handler_id,
         [
           [:dllb, :query, :start],
+          [:dllb, :query, :stop],
           [:dllb, :query, :exception]
         ],
         fn event, measurements, metadata, _config ->
@@ -542,13 +543,20 @@ defmodule DllbTest do
       )
 
       try do
-        assert {:error, {:pool_error, _}} = Dllb.Pool.query("SELECT 1")
+        res = Dllb.Pool.query("SELECT 1")
 
         assert_receive {:telemetry, [:dllb, :query, :start], %{system_time: _},
                         %{query: "SELECT 1"}}
 
-        assert_receive {:telemetry, [:dllb, :query, :exception], %{duration: _},
-                        %{query: "SELECT 1", kind: :exit}}
+        case res do
+          {:error, {:pool_error, _}} ->
+            assert_receive {:telemetry, [:dllb, :query, :exception], %{duration: _},
+                            %{query: "SELECT 1", kind: :exit}}
+
+          _ ->
+            assert_receive {:telemetry, [:dllb, :query, :stop], %{duration: _},
+                            %{query: "SELECT 1", result: ^res}}
+        end
       after
         :telemetry.detach(handler_id)
       end

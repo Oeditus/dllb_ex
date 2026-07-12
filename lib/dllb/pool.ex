@@ -48,9 +48,13 @@ defmodule Dllb.Pool do
   @spec query(String.t(), Keyword.t()) :: {:ok, Dllb.Result.t()} | {:error, term()}
   def query(query_string, opts \\ []) do
     with_telemetry(:query, %{query: query_string}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, fn _from, socket ->
-        result = Connection.query(socket, query_string, opts)
-        {result, result}
+      NimblePool.checkout!(__MODULE__, :checkout, fn
+        _from, {:error, _} = err ->
+          {err, err}
+
+        _from, socket ->
+          result = Connection.query(socket, query_string, opts)
+          {result, result}
       end)
     end)
   catch
@@ -70,9 +74,14 @@ defmodule Dllb.Pool do
   @spec batch([String.t()], Keyword.t()) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
   def batch(query_strings, opts \\ []) when is_list(query_strings) do
     with_telemetry(:batch, %{queries: query_strings}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, fn _from, socket ->
-        results = run_batch(socket, query_strings, opts)
-        {results, results}
+      NimblePool.checkout!(__MODULE__, :checkout, fn
+        _from, {:error, _} = err ->
+          results = Enum.map(query_strings, fn _ -> err end)
+          {results, results}
+
+        _from, socket ->
+          results = run_batch(socket, query_strings, opts)
+          {results, results}
       end)
     end)
   catch
@@ -91,9 +100,13 @@ defmodule Dllb.Pool do
           {:ok, Dllb.Result.t()} | {:error, term()}
   def batch_transaction(query_strings, opts \\ []) when is_list(query_strings) do
     with_telemetry(:batch_transaction, %{queries: query_strings}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, fn _from, socket ->
-        result = Connection.batch_transaction(socket, query_strings, opts)
-        {result, result}
+      NimblePool.checkout!(__MODULE__, :checkout, fn
+        _from, {:error, _} = err ->
+          {err, err}
+
+        _from, socket ->
+          result = Connection.batch_transaction(socket, query_strings, opts)
+          {result, result}
       end)
     end)
   catch
@@ -129,7 +142,7 @@ defmodule Dllb.Pool do
           {:ok, new_socket, {:connected, new_socket}, opts}
 
         {:error, _reason} ->
-          {:reply, {:error, :closed}, {:disconnected, conn_opts}, opts}
+          {:ok, {:error, :closed}, {:disconnected, conn_opts}, opts}
       end
     end
   end
@@ -140,7 +153,7 @@ defmodule Dllb.Pool do
         {:ok, socket, {:connected, socket}, opts}
 
       {:error, _reason} ->
-        {:reply, {:error, :closed}, {:disconnected, conn_opts}, opts}
+        {:ok, {:error, :closed}, {:disconnected, conn_opts}, opts}
     end
   end
 
