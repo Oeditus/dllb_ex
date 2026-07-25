@@ -39,7 +39,7 @@ defmodule Dllb.Schema do
   end
 
   @doc """
-  Returns the list of query strings to define the `ast_node` table and its 15 fields.
+  Returns the list of query strings to define the `ast_node` table and its 18 fields.
 
   Fields:
     - `kind` (string, required) - the Metastatic node type
@@ -57,6 +57,8 @@ defmodule Dllb.Schema do
     - `docstring` (string) - documentation string
     - `source_embedding` (array) - 768-dim source code embedding
     - `structure_embedding` (array) - 384-dim structural embedding
+    - `docstring_embedding` (array) - 768-dim docstring embedding
+    - `ast_serialized` (string) - JSON-serialized AST subtree
   """
   @spec ast_node_table() :: [String.t()]
   def ast_node_table do
@@ -76,7 +78,9 @@ defmodule Dllb.Schema do
       Query.define_field("ast_node", "signature", "string"),
       Query.define_field("ast_node", "docstring", "string"),
       Query.define_field("ast_node", "source_embedding", "array"),
-      Query.define_field("ast_node", "structure_embedding", "array")
+      Query.define_field("ast_node", "structure_embedding", "array"),
+      Query.define_field("ast_node", "docstring_embedding", "array"),
+      Query.define_field("ast_node", "ast_serialized", "string")
     ]
   end
 

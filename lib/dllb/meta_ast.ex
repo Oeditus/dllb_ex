@@ -68,6 +68,13 @@ defmodule Dllb.MetaAST do
         {context[:module], raw_name}
       end
 
+    ast_serialized =
+      if type_atom in [:container, :function_def] do
+        to_json_string({type_atom, meta, children_or_value})
+      else
+        nil
+      end
+
     %{
       kind: NodeTypes.to_dllb_kind(type_atom),
       name: sensible_name(name, type_atom, children_or_value, meta),
@@ -81,7 +88,8 @@ defmodule Dllb.MetaAST do
       line_end: Keyword.get(meta, :end_line),
       source_text: Keyword.get(meta, :source_text),
       signature: Keyword.get(meta, :signature),
-      docstring: Keyword.get(meta, :doc)
+      docstring: Keyword.get(meta, :doc),
+      ast_serialized: ast_serialized
     }
     |> reject_nil_values()
   end
@@ -205,7 +213,13 @@ defmodule Dllb.MetaAST do
       signature: unwrap_typed(row["signature"]),
       docstring: unwrap_typed(row["docstring"]),
       source_embedding: row["source_embedding"],
-      structure_embedding: row["structure_embedding"]
+      structure_embedding: row["structure_embedding"],
+      docstring_embedding: row["docstring_embedding"],
+      ast_serialized: unwrap_typed(row["ast_serialized"]),
+      similarity: unwrap_typed(row["similarity"]),
+      complexity: unwrap_typed(row["complexity"]),
+      ast_hash: unwrap_typed(row["ast_hash"]),
+      count: unwrap_typed(row["count"])
     }
     |> reject_nil_values()
   end
@@ -484,4 +498,116 @@ defmodule Dllb.MetaAST do
   defp visibility_string(:public), do: "public"
   defp visibility_string(:private), do: "private"
   defp visibility_string(_), do: nil
+
+  @doc """
+  Serializes a Metastatic AST node to its JSON representation matching the Rust `MetaNode` format.
+  """
+  @spec to_json_string(meta_ast_node()) :: String.t()
+  def to_json_string(node) do
+    node
+    |> serialize_meta_node()
+    |> :json.encode()
+    |> IO.iodata_to_binary()
+  end
+
+  defp serialize_node_type(:literal), do: "Literal"
+  defp serialize_node_type(:variable), do: "Variable"
+  defp serialize_node_type(:binary_op), do: "BinaryOp"
+  defp serialize_node_type(:unary_op), do: "UnaryOp"
+  defp serialize_node_type(:function_call), do: "FunctionCall"
+  defp serialize_node_type(:conditional), do: "Conditional"
+  defp serialize_node_type(:early_return), do: "EarlyReturn"
+  defp serialize_node_type(:throw), do: "Throw"
+  defp serialize_node_type(:block), do: "Block"
+  defp serialize_node_type(:list), do: "List"
+  defp serialize_node_type(:map), do: "Map"
+  defp serialize_node_type(:pair), do: "Pair"
+  defp serialize_node_type(:tuple), do: "Tuple"
+  defp serialize_node_type(:assignment), do: "Assignment"
+  defp serialize_node_type(:inline_match), do: "InlineMatch"
+  defp serialize_node_type(:range), do: "Range"
+  defp serialize_node_type(:string_interpolation), do: "StringInterpolation"
+  defp serialize_node_type(:bin_segment), do: "BinSegment"
+  defp serialize_node_type(:comment), do: "Comment"
+  defp serialize_node_type(:loop), do: "Loop"
+  defp serialize_node_type(:lambda), do: "Lambda"
+  defp serialize_node_type(:collection_op), do: "CollectionOp"
+  defp serialize_node_type(:pattern_match), do: "PatternMatch"
+  defp serialize_node_type(:match_arm), do: "MatchArm"
+  defp serialize_node_type(:exception_handling), do: "ExceptionHandling"
+  defp serialize_node_type(:async_operation), do: "AsyncOperation"
+  defp serialize_node_type(:yield), do: "Yield"
+  defp serialize_node_type(:comprehension), do: "Comprehension"
+  defp serialize_node_type(:generator), do: "Generator"
+  defp serialize_node_type(:filter), do: "Filter"
+  defp serialize_node_type(:pipe), do: "Pipe"
+  defp serialize_node_type(:pin), do: "Pin"
+  defp serialize_node_type(:assert_type), do: "AssertType"
+  defp serialize_node_type(:container), do: "Container"
+  defp serialize_node_type(:function_def), do: "FunctionDef"
+  defp serialize_node_type(:param), do: "Param"
+  defp serialize_node_type(:attribute_access), do: "AttributeAccess"
+  defp serialize_node_type(:augmented_assignment), do: "AugmentedAssignment"
+  defp serialize_node_type(:property), do: "Property"
+  defp serialize_node_type(:import), do: "Import"
+  defp serialize_node_type(:type_annotation), do: "TypeAnnotation"
+  defp serialize_node_type(:decorator), do: "Decorator"
+  defp serialize_node_type(:record_update), do: "RecordUpdate"
+  defp serialize_node_type(:child_spec), do: "ChildSpec"
+  defp serialize_node_type(:language_specific), do: "LanguageSpecific"
+  defp serialize_node_type(:_), do: "Wildcard"
+
+  defp serialize_node_type(other) when is_atom(other) do
+    other
+    |> Atom.to_string()
+    |> String.split("_")
+    |> Enum.map_join("", &String.capitalize/1)
+  end
+
+  defp serialize_meta_node({type, meta, children_or_value}) do
+    node_type_str = serialize_node_type(type)
+    serialized_meta = Enum.map(meta, fn {k, v} -> [to_string(k), serialize_meta_value(v)] end)
+
+    serialized_children =
+      if node_list?(children_or_value) do
+        %{"Nodes" => Enum.map(children_or_value, &serialize_meta_node/1)}
+      else
+        %{"Value" => serialize_meta_value(children_or_value)}
+      end
+
+    %{
+      "node_type" => node_type_str,
+      "meta" => serialized_meta,
+      "children" => serialized_children
+    }
+  end
+
+  defp node_list?([]), do: true
+
+  defp node_list?(list) when is_list(list) do
+    Enum.all?(list, &ast_node?/1)
+  end
+
+  defp node_list?(_), do: false
+
+  defp ast_node?({type, meta, _}) when is_atom(type) and is_list(meta), do: true
+  defp ast_node?(_), do: false
+
+  defp serialize_meta_value(v) when is_binary(v), do: %{"String" => v}
+  defp serialize_meta_value(v) when is_integer(v), do: %{"Int" => v}
+  defp serialize_meta_value(v) when is_float(v), do: %{"Float" => v}
+  defp serialize_meta_value(v) when is_boolean(v), do: %{"Bool" => v}
+  defp serialize_meta_value(nil), do: "Null"
+  defp serialize_meta_value(v) when is_atom(v), do: %{"Atom" => Atom.to_string(v)}
+
+  defp serialize_meta_value(v) when is_list(v) do
+    %{"List" => Enum.map(v, &serialize_meta_value/1)}
+  end
+
+  defp serialize_meta_value({type, meta, _children_or_value} = node)
+       when is_atom(type) and is_list(meta) do
+    %{"Node" => serialize_meta_node(node)}
+  end
+
+  defp serialize_meta_value(other), do: %{"String" => inspect(other)}
 end

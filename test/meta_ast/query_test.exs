@@ -298,13 +298,15 @@ defmodule Dllb.MetaAST.QueryTest do
   # ---------------------------------------------------------------------------
 
   describe "schema has new fields" do
-    test "ast_node_table includes module, arity, visibility, project_path" do
+    test "ast_node_table includes module, arity, visibility, project_path, docstring_embedding, ast_serialized" do
       stmts = Dllb.Schema.ast_node_table()
       fields_str = Enum.join(stmts, " ")
       assert fields_str =~ "DEFINE FIELD module ON ast_node"
       assert fields_str =~ "DEFINE FIELD arity ON ast_node"
       assert fields_str =~ "DEFINE FIELD visibility ON ast_node"
       assert fields_str =~ "DEFINE FIELD project_path ON ast_node"
+      assert fields_str =~ "DEFINE FIELD docstring_embedding ON ast_node"
+      assert fields_str =~ "DEFINE FIELD ast_serialized ON ast_node"
     end
 
     test "ast_node_indexes includes new btree indexes" do
@@ -317,13 +319,15 @@ defmodule Dllb.MetaAST.QueryTest do
   end
 
   describe "to_dllb_document populates new fields" do
-    test "includes module from context" do
+    test "includes module from context and serializes AST" do
       node = {:function_def, [name: "parse", line: 10, params: [{:param, [], "x"}]], []}
       ctx = %{language: :elixir, file_path: "/app/lib/p.ex", module: "MyModule"}
       doc = Dllb.MetaAST.to_dllb_document(node, ctx)
 
       assert doc.module == "MyModule"
       assert doc.arity == 1
+      assert is_binary(doc.ast_serialized)
+      assert doc.ast_serialized =~ "\"node_type\":\"FunctionDef\""
     end
 
     test "includes visibility from meta" do
@@ -340,11 +344,13 @@ defmodule Dllb.MetaAST.QueryTest do
       doc = Dllb.MetaAST.to_dllb_document(node, ctx)
 
       assert doc.project_path == "/app"
+      assert is_binary(doc.ast_serialized)
+      assert doc.ast_serialized =~ "\"node_type\":\"Container\""
     end
   end
 
   describe "from_dllb_row handles new fields" do
-    test "parses module, arity, visibility, project_path" do
+    test "parses module, arity, visibility, project_path, docstring_embedding, ast_serialized, and query projections" do
       row = %{
         "id" => "ast_node:p_parse_10",
         "kind" => "function_def",
@@ -354,7 +360,13 @@ defmodule Dllb.MetaAST.QueryTest do
         "module" => "MyModule",
         "arity" => 2,
         "visibility" => "public",
-        "project_path" => "/app"
+        "project_path" => "/app",
+        "docstring_embedding" => [0.1, 0.2, 0.3],
+        "ast_serialized" => "{\"node_type\":\"FunctionDef\"}",
+        "similarity" => 0.95,
+        "complexity" => 12,
+        "ast_hash" => 42_523_523,
+        "count" => 3
       }
 
       parsed = Dllb.MetaAST.from_dllb_row(row)
@@ -363,6 +375,12 @@ defmodule Dllb.MetaAST.QueryTest do
       assert parsed.arity == 2
       assert parsed.visibility == :public
       assert parsed.project_path == "/app"
+      assert parsed.docstring_embedding == [0.1, 0.2, 0.3]
+      assert parsed.ast_serialized == "{\"node_type\":\"FunctionDef\"}"
+      assert parsed.similarity == 0.95
+      assert parsed.complexity == 12
+      assert parsed.ast_hash == 42_523_523
+      assert parsed.count == 3
     end
   end
 
@@ -399,6 +417,36 @@ defmodule Dllb.MetaAST.QueryTest do
 
       assert Enum.any?(relates, &String.starts_with?(&1, "RELATE"))
       assert Enum.any?(relates, &String.starts_with?(&1, "CREATE _edge_idx"))
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # AST structural queries (server-side complexity, hash, and similarity)
+  # ---------------------------------------------------------------------------
+
+  describe "AST structural queries" do
+    test "similar_by_ast/2 generates correct SELECT with ast::similarity" do
+      target_node = {:function_def, [name: "hello", line: 3], []}
+      q = Query.similar_by_ast(target_node, limit: 5, threshold: 0.9, language: "elixir")
+      assert q =~ "SELECT id, name, ast::similarity(ast_serialized,"
+      assert q =~ "AS similarity FROM ast_node"
+      assert q =~ "WHERE language = 'elixir' AND ast::similarity(ast_serialized,"
+      assert q =~ ") >= 0.9"
+      assert q =~ "ORDER BY similarity DESC LIMIT 5"
+    end
+
+    test "complex_functions/2 generates correct SELECT with ast::complexity" do
+      q = Query.complex_functions(8, limit: 3, project_path: "/app")
+      assert q =~ "SELECT id, name, ast::complexity(ast_serialized) AS complexity FROM ast_node"
+      assert q =~ "WHERE project_path = '/app' AND ast::complexity(ast_serialized) > 8"
+      assert q =~ "ORDER BY complexity DESC LIMIT 3"
+    end
+
+    test "duplicate_code/1 generates correct SELECT with ast::hash" do
+      q = Query.duplicate_code(kind: "function_def")
+      assert q =~ "SELECT ast::hash(ast_serialized) AS ast_hash, COUNT() AS count FROM ast_node"
+      assert q =~ "WHERE kind = 'function_def'"
+      assert q =~ "GROUP BY ast_hash HAVING count > 1 ORDER BY count DESC LIMIT 20"
     end
   end
 end

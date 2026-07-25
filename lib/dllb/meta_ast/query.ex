@@ -259,6 +259,86 @@ defmodule Dllb.MetaAST.Query do
   end
 
   # ---------------------------------------------------------------------------
+  # AST structural queries (server-side complexity, hash, and similarity)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Find structurally similar AST nodes using the server-side `ast::similarity` function.
+
+  The `target` can be a serialized JSON string or a Metastatic AST node 3-tuple
+  (which will be automatically serialized to JSON).
+
+  ## Options
+
+    * `:limit` - max results (default 10)
+    * `:threshold` - minimum similarity score between 0.0 and 1.0 (default 0.8)
+    * `:kind` / `:file_path` / `:language` / `:project_path` - scope filters
+  """
+  @spec similar_by_ast(String.t() | MetaAST.meta_ast_node(), keyword()) :: String.t()
+  def similar_by_ast(target, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    threshold = Keyword.get(opts, :threshold, 0.8)
+
+    json_str =
+      case target do
+        str when is_binary(str) -> str
+        node when is_tuple(node) -> MetaAST.to_json_string(node)
+      end
+
+    escaped_json = escape(json_str)
+
+    where_clause = "ast::similarity(ast_serialized, #{escaped_json}) >= #{threshold}"
+
+    scope = scope_where(opts)
+    where = if scope, do: "#{scope} AND #{where_clause}", else: where_clause
+
+    "SELECT id, name, ast::similarity(ast_serialized, #{escaped_json}) AS similarity FROM #{@table} WHERE #{where} ORDER BY similarity DESC LIMIT #{limit}"
+  end
+
+  @doc """
+  Find AST nodes with cyclomatic complexity above a threshold,
+  using the server-side `ast::complexity` function.
+
+  ## Options
+
+    * `:limit` - max results (default 10)
+    * `:kind` / `:file_path` / `:language` / `:project_path` - scope filters
+  """
+  @spec complex_functions(pos_integer(), keyword()) :: String.t()
+  def complex_functions(min_complexity, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+
+    where_clause = "ast::complexity(ast_serialized) > #{min_complexity}"
+
+    scope = scope_where(opts)
+    where = if scope, do: "#{scope} AND #{where_clause}", else: where_clause
+
+    "SELECT id, name, ast::complexity(ast_serialized) AS complexity FROM #{@table} WHERE #{where} ORDER BY complexity DESC LIMIT #{limit}"
+  end
+
+  @doc """
+  Find duplicate code structures that share the same Zobrist-style structural hash
+  using the server-side `ast::hash` function.
+
+  Returns a query that groups nodes by their structural hash and finds groups
+  with more than one node.
+
+  ## Options
+
+    * `:limit` - max results (default 20)
+    * `:kind` / `:file_path` / `:language` / `:project_path` - scope filters
+  """
+  @spec duplicate_code(keyword()) :: String.t()
+  def duplicate_code(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 20)
+
+    scope = scope_where(opts)
+    where = if scope, do: " WHERE #{scope}", else: ""
+
+    "SELECT ast::hash(ast_serialized) AS ast_hash, COUNT() AS count FROM #{@table}#{where} GROUP BY ast_hash HAVING count > 1 ORDER BY count DESC LIMIT #{limit}"
+  end
+
+  # ---------------------------------------------------------------------------
   # HNSW snapshot commands
   # ---------------------------------------------------------------------------
 

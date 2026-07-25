@@ -1,7 +1,7 @@
 defmodule Dllb.MixProject do
   use Mix.Project
 
-  @version "0.8.2"
+  @version "0.8.3"
   @source_url "https://github.com/Oeditus/dllb_ex"
 
   def project do
@@ -10,7 +10,7 @@ defmodule Dllb.MixProject do
       version: @version,
       elixir: "~> 1.18",
       name: "Dllb",
-      description: "Elixir client for the dllb multi-model NoSQL database",
+      description: "Elixir client for the `dllb` multi-model NoSQL database",
       source_url: @source_url,
       homepage_url: @source_url,
       start_permanent: Mix.env() == :prod,

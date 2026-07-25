@@ -74,19 +74,23 @@ defmodule Dllb.Pool do
   @spec batch([String.t()], Keyword.t()) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
   def batch(query_strings, opts \\ []) when is_list(query_strings) do
     with_telemetry(:batch, %{queries: query_strings}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, fn
-        _from, {:error, _} = err ->
-          results = Enum.map(query_strings, fn _ -> err end)
-          {results, results}
-
-        _from, socket ->
-          results = run_batch(socket, query_strings, opts)
-          {results, results}
-      end)
+      NimblePool.checkout!(__MODULE__, :checkout, batch_pool_fun(query_strings, opts))
     end)
   catch
     :exit, reason ->
       Enum.map(query_strings, fn _ -> {:error, {:pool_error, reason}} end)
+  end
+
+  defp batch_pool_fun(query_strings, opts) do
+    fn
+      _from, {:error, _} = err ->
+        results = Enum.map(query_strings, fn _ -> err end)
+        {results, results}
+
+      _from, socket ->
+        results = run_batch(socket, query_strings, opts)
+        {results, results}
+    end
   end
 
   @doc """
