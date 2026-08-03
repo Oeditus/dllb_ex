@@ -1,7 +1,7 @@
 defmodule Dllb.MixProject do
   use Mix.Project
 
-  @version "0.8.3"
+  @version "0.8.4"
   @source_url "https://github.com/Oeditus/dllb_ex"
 
   def project do
@@ -73,7 +73,15 @@ defmodule Dllb.MixProject do
       groups_for_modules: [
         "Query & Results": [Dllb.Query, Dllb.Result],
         Connection: [Dllb.Connection, Dllb.Pool, Dllb.Protocol],
-        Schema: [Dllb.Schema, Dllb.MetaAST]
+        Schema: [Dllb.Schema, Dllb.MetaAST],
+        "Code Intelligence": [
+          Dllb.MetaAST.Query,
+          Dllb.MetaAST.Ingest,
+          Dllb.MetaAST.Diff,
+          Dllb.MetaAST.Similarity,
+          Dllb.MetaAST.QueryHelpers,
+          Dllb.MetaAST.NodeTypes
+        ]
       ]
     ]
   end

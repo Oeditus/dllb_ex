@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-08-03
+
+Aligns the client with the dllb engine's native `ast::diff`, `ast::scope`,
+and `ast::clones` SQL functions (Code Intel Improvements).
+
+### Added
+
+- `Dllb.MetaAST.Query.ast_diff/2` builds a `SELECT` using the server-side
+  `ast::diff(ast_serialized, target)` function, the engine-side counterpart
+  to the purely client-side `Dllb.MetaAST.Diff.diff_trees/2`. Each result
+  row carries a JSON-encoded `diff` summary (`changes`/`added`/`removed`/
+  `modified`/`renamed`).
+- `Dllb.MetaAST.Query.ast_scope/2` builds a `SELECT` using the server-side
+  `ast::scope(ast_serialized, line)` function against a single AST node
+  record, the engine-side counterpart to
+  `Dllb.MetaAST.QueryHelpers.scope_at/2`.
+- `Dllb.MetaAST.Query.ast_clones/2` builds a `SELECT` using the server-side
+  `ast::clones(asts, threshold)` function, the engine-side counterpart to
+  `Dllb.MetaAST.Similarity.find_clones/2`.
+
 ## [0.7.0] - 2026-06-13
 
 Extends the client to cover the engine's new query-layer features: scoped

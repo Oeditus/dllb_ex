@@ -278,14 +278,7 @@ defmodule Dllb.MetaAST.Query do
   def similar_by_ast(target, opts \\ []) do
     limit = Keyword.get(opts, :limit, 10)
     threshold = Keyword.get(opts, :threshold, 0.8)
-
-    json_str =
-      case target do
-        str when is_binary(str) -> str
-        node when is_tuple(node) -> MetaAST.to_json_string(node)
-      end
-
-    escaped_json = escape(json_str)
+    escaped_json = escape(as_json(target))
 
     where_clause = "ast::similarity(ast_serialized, #{escaped_json}) >= #{threshold}"
 
@@ -336,6 +329,75 @@ defmodule Dllb.MetaAST.Query do
     where = if scope, do: " WHERE #{scope}", else: ""
 
     "SELECT ast::hash(ast_serialized) AS ast_hash, COUNT() AS count FROM #{@table}#{where} GROUP BY ast_hash HAVING count > 1 ORDER BY count DESC LIMIT #{limit}"
+  end
+
+  @doc """
+  Computes a structural diff between each AST node's stored tree and a
+  `target` tree, using the server-side `ast::diff` function (native Rust) --
+  the engine-side counterpart to `Dllb.MetaAST.Diff.diff_trees/2`.
+
+  The `target` can be a serialized JSON string or a Metastatic AST node
+  3-tuple (which will be automatically serialized to JSON). Each result row
+  carries a `diff` field: a JSON-encoded summary with `changes`, `added`,
+  `removed`, `modified`, and `renamed` keys.
+
+  Prefer `Dllb.MetaAST.Diff.diff_trees/2` for a purely client-side diff (no
+  round-trip); use this to delegate the comparison to already-indexed,
+  server-side ASTs.
+
+  ## Options
+
+    * `:limit` - max results (default 10)
+    * `:kind` / `:file_path` / `:language` / `:project_path` - scope filters
+  """
+  @spec ast_diff(String.t() | MetaAST.meta_ast_node(), keyword()) :: String.t()
+  def ast_diff(target, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    escaped_json = escape(as_json(target))
+
+    scope = scope_where(opts)
+    where = if scope, do: " WHERE #{scope}", else: ""
+
+    "SELECT id, name, ast::diff(ast_serialized, #{escaped_json}) AS diff FROM #{@table}#{where} LIMIT #{limit}"
+  end
+
+  @doc """
+  Finds the AST scope path (outermost to innermost node containing `line`)
+  within a single stored AST node's tree, using the server-side `ast::scope`
+  function -- the engine-side counterpart to
+  `Dllb.MetaAST.QueryHelpers.scope_at/2`.
+
+  `record_id` must be a full `table:id` reference, e.g. one returned by
+  `find_function/3` or `find_module/1`. The result row carries a `scope`
+  field: a JSON-encoded array of nodes, outermost first.
+  """
+  @spec ast_scope(String.t(), non_neg_integer()) :: String.t()
+  def ast_scope(record_id, line) when is_integer(line) and line >= 0 do
+    "SELECT ast::scope(ast_serialized, #{line}) AS scope FROM #{record_id}"
+  end
+
+  @doc """
+  Detects near-duplicate (fuzzy) clones among the given AST trees using the
+  server-side `ast::clones` function -- the native-Rust counterpart to
+  `Dllb.MetaAST.Similarity.find_clones/2`.
+
+  `asts` is a list of serialized JSON strings and/or Metastatic AST node
+  3-tuples (tuples are automatically serialized). Every `SELECT` requires a
+  `FROM` target, so this anchors on an arbitrary row of `ast_node` (its
+  stored content is not inspected) -- at least one row must already exist
+  in the table. The result row carries a `clones` field: a JSON-encoded
+  list of `%{"index_a" => i, "index_b" => j, "similarity" => score}` pairs.
+
+  ## Options
+
+    * `:threshold` - minimum similarity to report (default 0.8)
+  """
+  @spec ast_clones([String.t() | MetaAST.meta_ast_node()], keyword()) :: String.t()
+  def ast_clones(asts, opts \\ []) when is_list(asts) do
+    threshold = Keyword.get(opts, :threshold, 0.8)
+    json_array = "[" <> Enum.map_join(asts, ", ", &as_json/1) <> "]"
+
+    "SELECT ast::clones(#{escape(json_array)}, #{threshold}) AS clones FROM #{@table} LIMIT 1"
   end
 
   # ---------------------------------------------------------------------------
@@ -561,6 +623,11 @@ defmodule Dllb.MetaAST.Query do
     escaped = String.replace(value, "'", "''")
     "'#{escaped}'"
   end
+
+  # Accepts either an already-serialized JSON string or a Metastatic AST node
+  # 3-tuple, serializing the latter via `Dllb.MetaAST.to_json_string/1`.
+  defp as_json(str) when is_binary(str), do: str
+  defp as_json(node) when is_tuple(node), do: MetaAST.to_json_string(node)
 
   # Escapes a WHERE-clause value: integers stay bare, everything else is
   # treated as a quoted string.

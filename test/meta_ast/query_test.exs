@@ -448,5 +448,41 @@ defmodule Dllb.MetaAST.QueryTest do
       assert q =~ "WHERE kind = 'function_def'"
       assert q =~ "GROUP BY ast_hash HAVING count > 1 ORDER BY count DESC LIMIT 20"
     end
+
+    test "ast_diff/2 generates correct SELECT with ast::diff" do
+      target_node = {:function_def, [name: "hello", line: 3], []}
+      q = Query.ast_diff(target_node, limit: 5, kind: "function_def")
+      assert q =~ "SELECT id, name, ast::diff(ast_serialized,"
+      assert q =~ "AS diff FROM ast_node"
+      assert q =~ "WHERE kind = 'function_def'"
+      assert q =~ "LIMIT 5"
+    end
+
+    test "ast_diff/2 accepts an already-serialized JSON string" do
+      q = Query.ast_diff(~s|{"node_type":"FunctionDef"}|)
+
+      assert q ==
+               "SELECT id, name, ast::diff(ast_serialized, '{\"node_type\":\"FunctionDef\"}') AS diff FROM ast_node LIMIT 10"
+    end
+
+    test "ast_scope/2 generates correct SELECT with ast::scope" do
+      q = Query.ast_scope("ast_node:MyMod_parse_2", 12)
+      assert q == "SELECT ast::scope(ast_serialized, 12) AS scope FROM ast_node:MyMod_parse_2"
+    end
+
+    test "ast_clones/2 generates correct SELECT with ast::clones" do
+      asts = [~s|{"node_type":"A"}|, ~s|{"node_type":"B"}|]
+      q = Query.ast_clones(asts, threshold: 0.9)
+
+      assert q ==
+               "SELECT ast::clones('[{\"node_type\":\"A\"}, {\"node_type\":\"B\"}]', 0.9) AS clones FROM ast_node LIMIT 1"
+    end
+
+    test "ast_clones/2 defaults threshold to 0.8 and accepts AST 3-tuples" do
+      node = {:function_def, [name: "hello", line: 3], []}
+      q = Query.ast_clones([node])
+      assert q =~ "SELECT ast::clones('[{"
+      assert q =~ "}]', 0.8) AS clones FROM ast_node LIMIT 1"
+    end
   end
 end

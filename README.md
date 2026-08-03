@@ -21,7 +21,8 @@ on data rather than sockets.
 - **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `DeletedMany`, `Rows`, `Count`, `Update`, `Batch`, `Communities`, `Components`, `Error`) parsed from server responses.
 - **Secondary indexes**—Persisted single- and multi-field (composite) index definitions with optional `UNIQUE` constraints. Equality and range filters on indexed fields are transparently accelerated by the engine.
 - **Full-text & vector search**—`DEFINE FULLTEXT INDEX` (BM25/Tantivy) and `DEFINE VECTOR INDEX` (HNSW) creation, plus `SEARCH`, `VECTOR SEARCH`, and `HYBRID SEARCH` query builders with optional server-side `WHERE` scoping.
-- **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion.
+- **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion and incremental (diff-based) re-indexing.
+- **AST structural analysis**—Server-side (native Rust) `ast::similarity`, `ast::complexity`, `ast::hash`, `ast::diff`, `ast::scope`, and `ast::clones` SQL functions, each with pure-Elixir, round-trip-free client-side counterparts for offline/no-server use.
 - **Schema bootstrap**—Declarative schema definitions executed through any query function.
 - **OTP-ready**—Application supervision tree with opt-in pool startup via `config :dllb, enabled: true`.
 
@@ -205,6 +206,67 @@ context = %{language: :elixir, file_path: "/app/lib/parser.ex"}
 {:ok, %{nodes: 42, edges: 17}} = Dllb.MetaAST.ingest_tree(ast, context, &Dllb.query/1)
 ```
 
+### AST structural queries (native code-intel)
+
+`Dllb.MetaAST.Query` exposes the engine's native (Rust) structural AST SQL
+functions -- `ast::similarity`, `ast::complexity`, `ast::hash`, `ast::diff`,
+and `ast::scope` -- as query builders that scan and compare the
+already-stored `ast_serialized` column, without fetching every tree back to
+the client for comparison. `ast::clones` instead compares a list of ASTs you
+supply directly (see its docs for the caveats this implies).
+
+```elixir
+alias Dllb.MetaAST.Query, as: ASTQuery
+
+# Fuzzy structural similarity against a target AST (3-tuple or JSON string).
+ASTQuery.similar_by_ast(target_node, threshold: 0.85, limit: 10)
+
+# Cyclomatic complexity above a threshold.
+ASTQuery.complex_functions(10, limit: 10)
+
+# Exact structural (Zobrist-hash) duplicate groups.
+ASTQuery.duplicate_code(kind: "function_def")
+
+# Structural diff of every stored node against a target tree; each row's
+# `diff` field is a JSON-encoded summary (changes/added/removed/modified/renamed).
+ASTQuery.ast_diff(target_node, limit: 5)
+
+# Scope path (outermost to innermost) containing a line, within one record.
+ASTQuery.ast_scope("ast_node:MyMod_parse_2", 42)
+
+# Fuzzy clone pairs across a list of ASTs (requires at least one `ast_node` row
+# to anchor the query's mandatory FROM clause).
+ASTQuery.ast_clones([ast_a, ast_b, ast_c], threshold: 0.9)
+```
+
+Each native function has a purely client-side, round-trip-free Elixir
+counterpart, useful when no server is available or when comparing ASTs that
+aren't (yet) persisted:
+
+| Native (server-side)                  | Client-side (pure Elixir)                |
+| -------------------------------------- | ----------------------------------------- |
+| `ast::similarity` / `similar_by_ast/2` | `Dllb.MetaAST.Similarity.structural_similarity/2` |
+| `ast::hash` / `duplicate_code/1`       | `Dllb.MetaAST.Similarity.subtree_hash/1`  |
+| `ast::clones` / `ast_clones/2`         | `Dllb.MetaAST.Similarity.find_clones/2`   |
+| `ast::diff` / `ast_diff/2`             | `Dllb.MetaAST.Diff.diff_trees/2`          |
+| `ast::scope` / `ast_scope/2`           | `Dllb.MetaAST.QueryHelpers.scope_at/2`    |
+
+> [!NOTE]
+> The client-side `Dllb.MetaAST.Diff.diff_trees/2` (and `ast::diff` in turn)
+> compares node *type* and *children* structurally but ignores each node's
+> `meta` keyword list. Renames and changes confined to metadata (e.g. a call
+> target's name) are therefore detected as structural matches, not as
+> `:modified` changes -- diff at the granularity of shape, not identifiers.
+
+Incremental re-indexing combines a diff with `Dllb.MetaAST.Ingest`, so only
+changed entities are re-embedded and re-inserted:
+
+```elixir
+diff = Dllb.MetaAST.Diff.diff_trees(old_ast, new_ast)
+queries = Dllb.MetaAST.Ingest.incremental_queries(new_ast, diff, "/app/lib/parser.ex", "elixir")
+Dllb.batch(queries)
+```
+
 ## Modules
 
 - `Dllb`—top-level query interface (`query/1`, `query!/1`)
@@ -215,6 +277,12 @@ context = %{language: :elixir, file_path: "/app/lib/parser.ex"}
 - `Dllb.Result`—typed structs for parsed server responses
 - `Dllb.Schema`—declarative schema bootstrap (DEFINE TABLE/FIELD/INDEX)
 - `Dllb.MetaAST`—Metastatic AST serialization and bulk ingestion
+- `Dllb.MetaAST.Query`—domain query builder for `ast_node`, including native (server-side) structural AST functions
+- `Dllb.MetaAST.Ingest`—batch and incremental (diff-based) ingestion pipeline
+- `Dllb.MetaAST.Diff`—pure-Elixir, client-side structural AST diff (no round-trip)
+- `Dllb.MetaAST.Similarity`—pure-Elixir, client-side structural similarity, fingerprinting, and clone detection
+- `Dllb.MetaAST.QueryHelpers`—pure-Elixir, client-side tree navigation (ancestors, scope, call targets, complexity)
+- `Dllb.MetaAST.NodeTypes`—MetaAST node-type <-> dllb `kind` conversions
 - `Dllb.Error`—exception struct with typed error classification
 
 ## Documentation
