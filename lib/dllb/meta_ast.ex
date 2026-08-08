@@ -189,7 +189,7 @@ defmodule Dllb.MetaAST do
   """
   @spec from_dllb_row(map()) :: map()
   def from_dllb_row(row) when is_map(row) do
-    kind_raw = unwrap_typed(row["kind"] || "")
+    kind_raw = unwrap_typed(get_field(row, "kind") || "")
 
     kind =
       case NodeTypes.from_dllb_kind(kind_raw) do
@@ -198,30 +198,168 @@ defmodule Dllb.MetaAST do
       end
 
     %{
-      id: unwrap_typed(row["id"]),
+      id: unwrap_typed(get_field(row, "id")),
       kind: kind,
-      name: unwrap_typed(row["name"]),
-      language: safe_to_atom(unwrap_typed(row["language"])),
-      file_path: unwrap_typed(row["file_path"]),
-      module: unwrap_typed(row["module"]),
-      arity: unwrap_typed(row["arity"]),
-      visibility: safe_to_atom(unwrap_typed(row["visibility"])),
-      project_path: unwrap_typed(row["project_path"]),
-      line_start: unwrap_typed(row["line_start"]),
-      line_end: unwrap_typed(row["line_end"]),
-      source_text: unwrap_typed(row["source_text"]),
-      signature: unwrap_typed(row["signature"]),
-      docstring: unwrap_typed(row["docstring"]),
-      source_embedding: row["source_embedding"],
-      structure_embedding: row["structure_embedding"],
-      docstring_embedding: row["docstring_embedding"],
-      ast_serialized: unwrap_typed(row["ast_serialized"]),
-      similarity: unwrap_typed(row["similarity"]),
-      complexity: unwrap_typed(row["complexity"]),
-      ast_hash: unwrap_typed(row["ast_hash"]),
-      count: unwrap_typed(row["count"])
+      name: unwrap_typed(get_field(row, "name")),
+      language: safe_to_atom(unwrap_typed(get_field(row, "language"))),
+      file_path: unwrap_typed(get_field(row, "file_path")),
+      module: unwrap_typed(get_field(row, "module")),
+      arity: unwrap_typed(get_field(row, "arity")),
+      visibility: safe_to_atom(unwrap_typed(get_field(row, "visibility"))),
+      project_path: unwrap_typed(get_field(row, "project_path")),
+      line_start: unwrap_typed(get_field(row, "line_start")),
+      line_end: unwrap_typed(get_field(row, "line_end")),
+      source_text: unwrap_typed(get_field(row, "source_text")),
+      signature: unwrap_typed(get_field(row, "signature")),
+      docstring: unwrap_typed(get_field(row, "docstring")),
+      source_embedding: get_field(row, "source_embedding"),
+      structure_embedding: get_field(row, "structure_embedding"),
+      docstring_embedding: get_field(row, "docstring_embedding"),
+      ast_serialized: unwrap_typed(get_field(row, "ast_serialized")),
+      similarity: unwrap_typed(get_field(row, "similarity")),
+      complexity: unwrap_typed(get_field(row, "complexity")),
+      ast_hash: unwrap_typed(get_field(row, "ast_hash")),
+      count: unwrap_typed(get_field(row, "count"))
     }
     |> reject_nil_values()
+  end
+
+  @doc """
+  Converts a dllb result row or MetaAST node map into a Ragex-compatible
+  `{node_type, node_id}` tuple (e.g. `{:function, {Elixir.Mod, :fun, 2}}`).
+  """
+  @spec to_node_ref(map()) :: {atom(), term()}
+  # credo:disable-for-lines:90 Credo.Check.Refactor.CyclomaticComplexity
+  def to_node_ref(row) when is_map(row) do
+    kind_raw = get_field(row, "kind") || get_field(row, "type")
+
+    node_type =
+      case NodeTypes.from_dllb_kind(kind_raw) do
+        {:ok, :function_def} ->
+          :function
+
+        {:ok, :container} ->
+          :module
+
+        {:ok, atom} ->
+          atom
+
+        :error ->
+          case to_string(kind_raw) do
+            "function_def" ->
+              :function
+
+            "container" ->
+              :module
+
+            "function" ->
+              :function
+
+            "module" ->
+              :module
+
+            other when is_binary(other) and other != "" ->
+              try do
+                String.to_existing_atom(other)
+              rescue
+                ArgumentError -> String.to_atom(other)
+              end
+
+            _ ->
+              :unknown
+          end
+      end
+
+    node_id =
+      case node_type do
+        :function ->
+          mod = get_field(row, "module")
+          name = get_field(row, "name")
+          arity = get_field(row, "arity")
+
+          mod_atom =
+            cond do
+              is_nil(mod) ->
+                nil
+
+              is_atom(mod) ->
+                mod
+
+              is_binary(mod) ->
+                String.to_atom("Elixir." <> String.replace_prefix(mod, "Elixir.", ""))
+            end
+
+          name_atom =
+            cond do
+              is_nil(name) -> nil
+              is_atom(name) -> name
+              is_binary(name) -> String.to_atom(name)
+            end
+
+          {mod_atom, name_atom, arity}
+
+        :module ->
+          mod = get_field(row, "name") || get_field(row, "module")
+
+          cond do
+            is_nil(mod) ->
+              nil
+
+            is_atom(mod) ->
+              mod
+
+            is_binary(mod) ->
+              String.to_atom("Elixir." <> String.replace_prefix(mod, "Elixir.", ""))
+          end
+
+        _ ->
+          get_field(row, "name")
+      end
+
+    {node_type, node_id}
+  end
+
+  @doc """
+  Formats a dllb result row or MetaAST node map into a human-readable node ID
+  string (e.g. `"Module.fun/arity"` for functions, `"Module"` for containers).
+  """
+  @spec format_node_id(map()) :: String.t()
+  def format_node_id(row) when is_map(row) do
+    {type, id} = to_node_ref(row)
+    format_ref(type, id)
+  end
+
+  defp format_ref(:function, {mod, name, arity}) do
+    mod_str = if mod, do: mod |> to_string() |> String.replace_prefix("Elixir.", ""), else: nil
+    name_str = if name, do: to_string(name), else: nil
+
+    case {mod_str, name_str, arity} do
+      {nil, nil, _} -> "?"
+      {nil, n, nil} -> n
+      {nil, n, a} -> "#{n}/#{a}"
+      {m, nil, _} -> m
+      {m, n, nil} -> "#{m}.#{n}"
+      {m, n, a} -> "#{m}.#{n}/#{a}"
+    end
+  end
+
+  defp format_ref(:module, name) do
+    name |> to_string() |> String.replace_prefix("Elixir.", "")
+  end
+
+  defp format_ref(type, id) do
+    "#{type}:#{inspect(id)}"
+  end
+
+  defp get_field(map, key) when is_map(map) and is_binary(key) do
+    atom_key =
+      try do
+        String.to_existing_atom(key)
+      rescue
+        ArgumentError -> nil
+      end
+
+    Map.get(map, key) || (atom_key && Map.get(map, atom_key))
   end
 
   @doc """
