@@ -46,7 +46,7 @@ config :dllb,
   enabled: true,
   host: "127.0.0.1",
   port: 3009,
-  pool_size: 5,
+  pool_size: 30,
   outcome: :json,
   timeout: 30_000
 ```
@@ -59,7 +59,7 @@ no dllb server is available.
 
 - `:host`—server hostname or IP (default `"127.0.0.1"`)
 - `:port`—server port (default `3009`)
-- `:pool_size`—number of persistent TCP connections (default `5`)
+- `:pool_size`—number of persistent TCP connections (default `30`)
 - `:outcome`—response format: `:json`, `:toon`, or `:csv` (default `:json`)
 - `:timeout`—connection and receive timeout in milliseconds (default `30_000`)
 

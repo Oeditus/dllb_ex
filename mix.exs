@@ -1,7 +1,7 @@
 defmodule Dllb.MixProject do
   use Mix.Project
 
-  @version "0.8.5"
+  @version "0.9.0"
   @source_url "https://github.com/Oeditus/dllb_ex"
 
   def project do

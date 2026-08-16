@@ -17,19 +17,20 @@ defmodule Dllb.Pool do
 
     * `:host` - server hostname (default from app env or `"127.0.0.1"`)
     * `:port` - server port (default from app env or `3009`)
-    * `:pool_size` - number of connections (default from app env or `5`)
+    * `:pool_size` - number of connections (default from app env or `30`)
     * `:outcome` - response format (default `:json`)
     * `:timeout` - connection/recv timeout in ms (default `30_000`)
   """
   @spec child_spec(Keyword.t()) :: Supervisor.child_spec()
   def child_spec(opts \\ []) do
-    pool_size = Keyword.get(opts, :pool_size, Application.get_env(:dllb, :pool_size, 5))
+    pool_name = Keyword.get(opts, :name, __MODULE__)
+    pool_size = Keyword.get(opts, :pool_size, Application.get_env(:dllb, :pool_size, 30))
 
     %{
-      id: __MODULE__,
+      id: pool_name,
       start:
         {NimblePool, :start_link,
-         [[worker: {__MODULE__, opts}, pool_size: pool_size, name: __MODULE__]]}
+         [[worker: {__MODULE__, opts}, pool_size: pool_size, name: pool_name]]}
     }
   end
 
@@ -47,8 +48,10 @@ defmodule Dllb.Pool do
   """
   @spec query(String.t(), Keyword.t()) :: {:ok, Dllb.Result.t()} | {:error, term()}
   def query(query_string, opts \\ []) do
+    pool_name = Keyword.get(opts, :pool, __MODULE__)
+
     with_telemetry(:query, %{query: query_string}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, fn
+      NimblePool.checkout!(pool_name, :checkout, fn
         _from, {:error, _} = err ->
           {err, err}
 
@@ -73,8 +76,10 @@ defmodule Dllb.Pool do
   """
   @spec batch([String.t()], Keyword.t()) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
   def batch(query_strings, opts \\ []) when is_list(query_strings) do
+    pool_name = Keyword.get(opts, :pool, __MODULE__)
+
     with_telemetry(:batch, %{queries: query_strings}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, batch_pool_fun(query_strings, opts))
+      NimblePool.checkout!(pool_name, :checkout, batch_pool_fun(query_strings, opts))
     end)
   catch
     :exit, reason ->
@@ -103,8 +108,10 @@ defmodule Dllb.Pool do
   @spec batch_transaction([String.t()], Keyword.t()) ::
           {:ok, Dllb.Result.t()} | {:error, term()}
   def batch_transaction(query_strings, opts \\ []) when is_list(query_strings) do
+    pool_name = Keyword.get(opts, :pool, __MODULE__)
+
     with_telemetry(:batch_transaction, %{queries: query_strings}, fn ->
-      NimblePool.checkout!(__MODULE__, :checkout, fn
+      NimblePool.checkout!(pool_name, :checkout, fn
         _from, {:error, _} = err ->
           {err, err}
 

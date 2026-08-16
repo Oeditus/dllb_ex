@@ -11,7 +11,7 @@ defmodule Dllb.Application do
         enabled: true,
         host: "127.0.0.1",
         port: 3009,
-        pool_size: 5,
+        pool_size: 30,
         outcome: :json,
         timeout: 30_000
   """
@@ -25,7 +25,7 @@ defmodule Dllb.Application do
         pool_opts = [
           host: Application.get_env(:dllb, :host, "127.0.0.1"),
           port: Application.get_env(:dllb, :port, 3009),
-          pool_size: Application.get_env(:dllb, :pool_size, 5),
+          pool_size: Application.get_env(:dllb, :pool_size, 30),
           outcome: Application.get_env(:dllb, :outcome, :json),
           timeout: Application.get_env(:dllb, :timeout, 30_000)
         ]

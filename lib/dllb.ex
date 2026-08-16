@@ -9,7 +9,7 @@ defmodule Dllb do
         enabled: true,
         host: "127.0.0.1",
         port: 3009,
-        pool_size: 5,
+        pool_size: 30,
         outcome: :json,
         timeout: 30_000
 
@@ -24,17 +24,17 @@ defmodule Dllb do
 
   Returns `{:ok, result}` or `{:error, reason}`.
   """
-  @spec query(String.t()) :: {:ok, Dllb.Result.t()} | {:error, term()}
-  def query(query_string), do: Dllb.Pool.query(query_string)
+  @spec query(String.t(), Keyword.t()) :: {:ok, Dllb.Result.t()} | {:error, term()}
+  def query(query_string, opts \\ []), do: Dllb.Pool.query(query_string, opts)
 
   @doc """
   Executes a query through the connection pool, raising on error.
 
   Returns the result struct on success or raises `Dllb.Error`.
   """
-  @spec query!(String.t()) :: Dllb.Result.t()
-  def query!(query_string) do
-    case Dllb.Pool.query(query_string) do
+  @spec query!(String.t(), Keyword.t()) :: Dllb.Result.t()
+  def query!(query_string, opts \\ []) do
+    case Dllb.Pool.query(query_string, opts) do
       {:ok, %Dllb.Result.Error{message: message}} ->
         raise Dllb.Error, %{message: message, type: :query_error}
 
@@ -54,9 +54,9 @@ defmodule Dllb do
   operations (e.g. AST ingestion) because it amortises the pool
   checkout overhead.
   """
-  @spec batch([String.t()]) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
-  def batch(query_strings) when is_list(query_strings) do
-    Dllb.Pool.batch(query_strings)
+  @spec batch([String.t()], Keyword.t()) :: [{:ok, Dllb.Result.t()} | {:error, term()}]
+  def batch(query_strings, opts \\ []) when is_list(query_strings) do
+    Dllb.Pool.batch(query_strings, opts)
   end
 
   @doc """
@@ -69,9 +69,10 @@ defmodule Dllb do
   This is dramatically faster than `batch/1` for bulk writes because
   the server commits only once instead of once per statement.
   """
-  @spec batch_transaction([String.t()]) :: {:ok, Dllb.Result.t()} | {:error, term()}
-  def batch_transaction(query_strings) when is_list(query_strings) do
-    Dllb.Pool.batch_transaction(query_strings)
+  @spec batch_transaction([String.t()], Keyword.t()) ::
+          {:ok, Dllb.Result.t()} | {:error, term()}
+  def batch_transaction(query_strings, opts \\ []) when is_list(query_strings) do
+    Dllb.Pool.batch_transaction(query_strings, opts)
   end
 
   @doc """
@@ -79,10 +80,10 @@ defmodule Dllb do
 
   Returns a list of result structs on success.
   """
-  @spec batch!([String.t()]) :: [Dllb.Result.t()]
-  def batch!(query_strings) when is_list(query_strings) do
+  @spec batch!([String.t()], Keyword.t()) :: [Dllb.Result.t()]
+  def batch!(query_strings, opts \\ []) when is_list(query_strings) do
     query_strings
-    |> Dllb.Pool.batch()
+    |> Dllb.Pool.batch(opts)
     |> Enum.map(fn
       {:ok, %Dllb.Result.Error{message: message}} ->
         raise Dllb.Error, %{message: message, type: :query_error}
@@ -96,5 +97,13 @@ defmodule Dllb do
           type: :connection_error
         }
     end)
+  end
+
+  @doc """
+  Triggers database compaction on the dllb server to reclaim free space.
+  """
+  @spec compact(Keyword.t()) :: {:ok, Dllb.Result.t()} | {:error, term()}
+  def compact(opts \\ []) do
+    query("COMPACT", opts)
   end
 end
