@@ -90,6 +90,11 @@ defmodule Dllb.Connection do
   All statements execute in a single server-side storage transaction,
   eliminating per-statement write-commit overhead.
 
+  Since dllb v1.2.0 the server acknowledges the mode switch with a
+  `{"status":"batch_started"}` line *before* it starts buffering statements.
+  That acknowledgement is consumed here, so callers still receive exactly one
+  result: the `Dllb.Result.Batch` (or `Dllb.Result.Error`) for the block.
+
   ## Options
 
     * `:timeout` - recv timeout in ms (default `30_000`)
@@ -113,7 +118,8 @@ defmodule Dllb.Connection do
       ])
 
     with :ok <- :gen_tcp.send(socket, payload),
-         {:ok, line} <- recv_full_line(socket, timeout),
+         {:ok, first} <- recv_full_line(socket, timeout),
+         {:ok, line} <- skip_batch_ack(socket, first, timeout),
          {:ok, decoded} <- Protocol.decode(line, outcome),
          {:ok, result} <- parse_result(decoded, outcome) do
       {:ok, result}
@@ -175,13 +181,33 @@ defmodule Dllb.Connection do
           recv_full_line(socket, timeout, [chunk | acc])
         end
 
-      {:error, _} = err ->
+      {:error, _reason} = err ->
         err
     end
   end
 
   defp resolve_host(host) when is_binary(host), do: String.to_charlist(host)
   defp resolve_host(host) when is_list(host), do: host
+
+  # dllb v1.2.0+ acknowledges `BEGIN BATCH` with a `{"status":"batch_started"}`
+  # line before buffering statements. Older servers answer nothing until
+  # `END BATCH`, so the first line received is already the final result. Skip
+  # the acknowledgement when it is present, and return `first` unchanged
+  # otherwise, keeping both server generations working.
+  defp skip_batch_ack(socket, first, timeout) do
+    if batch_ack?(first) do
+      recv_full_line(socket, timeout)
+    else
+      {:ok, first}
+    end
+  end
+
+  defp batch_ack?(line) do
+    case Protocol.decode(line, :json) do
+      {:ok, %{"status" => "batch_started"}} -> true
+      _ -> false
+    end
+  end
 
   defp parse_result(decoded, :json) when is_map(decoded), do: Result.parse(decoded)
   defp parse_result(raw, _format), do: {:ok, raw}

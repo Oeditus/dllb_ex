@@ -29,3 +29,6 @@ dllb-*.tar
 /.elixir_ls/
 /.erl.history/
 /.zed/
+
+/.ragex/
+/.yoke/

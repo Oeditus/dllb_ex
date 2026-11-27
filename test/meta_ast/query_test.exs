@@ -234,6 +234,23 @@ defmodule Dllb.MetaAST.QueryTest do
       assert by_kind["function_def"] == 5
       assert by_kind["container"] == 2
     end
+
+    test "aggregates plain-JSON grouped rows (dllb v1.2.0+)" do
+      fun = fn q ->
+        assert q == "COUNT ast_node GROUP BY kind"
+
+        rows = [
+          %{"kind" => "function_def", "count" => 5},
+          %{"kind" => "container", "count" => 2}
+        ]
+
+        {:ok, %Dllb.Result.Rows{count: 2, data: rows}}
+      end
+
+      assert {:ok, %{total: 7, by_kind: by_kind}} = Query.exec_stats(fun)
+      assert by_kind["function_def"] == 5
+      assert by_kind["container"] == 2
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -380,6 +397,30 @@ defmodule Dllb.MetaAST.QueryTest do
       assert parsed.similarity == 0.95
       assert parsed.complexity == 12
       assert parsed.ast_hash == 42_523_523
+      assert parsed.count == 3
+    end
+
+    test "parses serde-tagged rows from a pre-1.2.0 server" do
+      row = %{
+        "id" => %{"String" => "ast_node:p_parse_10"},
+        "kind" => %{"String" => "function_def"},
+        "name" => %{"String" => "parse"},
+        "language" => %{"String" => "elixir"},
+        "arity" => %{"Int" => 2},
+        "visibility" => %{"String" => "public"},
+        "source_embedding" => %{"Array" => [%{"Float" => 0.1}, %{"Float" => 0.2}]},
+        "similarity" => %{"Float" => 0.95},
+        "count" => %{"Int" => 3}
+      }
+
+      parsed = Dllb.MetaAST.from_dllb_row(row)
+
+      assert parsed.name == "parse"
+      assert parsed.kind == :function_def
+      assert parsed.arity == 2
+      assert parsed.visibility == :public
+      assert parsed.source_embedding == [0.1, 0.2]
+      assert parsed.similarity == 0.95
       assert parsed.count == 3
     end
   end

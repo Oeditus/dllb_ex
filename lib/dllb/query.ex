@@ -162,12 +162,19 @@ defmodule Dllb.Query do
   end
 
   @doc """
-  Builds a `DELETE <table> [WHERE <clause>]` statement that removes every row
+  Builds a `DELETE <table> WHERE <clause>` statement that removes every row
   matching the (already-built) WHERE clause in a single server-side operation.
 
   Secondary, full-text, and vector indexes are maintained by the engine. The
   result is a `Dllb.Result.DeletedMany` reporting how many rows were removed.
-  An empty (or omitted) WHERE deletes every row in the table.
+
+  ## Filterless deletions
+
+  Since dllb v1.2.0 a bare `DELETE <table>` is a **parse error**: a missing
+  `WHERE` used to wipe the whole table silently, so the engine now demands
+  that intent be spelled out. When `where` is `nil` or blank this function
+  therefore emits the explicit `DELETE ALL FROM <table>` form, which is the
+  only filterless deletion the engine accepts.
 
   ## Examples
 
@@ -175,13 +182,33 @@ defmodule Dllb.Query do
       "DELETE ast_node WHERE file_path = '/a.ex'"
 
       iex> Dllb.Query.delete_where("ast_node")
-      "DELETE ast_node"
+      "DELETE ALL FROM ast_node"
 
   """
   @spec delete_where(String.t(), String.t() | nil) :: String.t()
   def delete_where(table, where \\ nil) do
-    maybe_append("DELETE #{table}", "WHERE", where)
+    case where && String.trim(where) do
+      clause when is_binary(clause) and clause != "" -> "DELETE #{table} WHERE #{clause}"
+      _ -> "DELETE ALL FROM #{table}"
+    end
   end
+
+  @doc """
+  Builds an explicit `DELETE ALL FROM <table>` statement that removes every
+  row in the table.
+
+  This is the only filterless deletion form dllb accepts (v1.2.0+); a bare
+  `DELETE <table>` is rejected by the parser. Prefer `delete_where/2` with a
+  `WHERE` clause whenever the intent is to remove a subset.
+
+  ## Examples
+
+      iex> Dllb.Query.delete_all("ast_node")
+      "DELETE ALL FROM ast_node"
+
+  """
+  @spec delete_all(String.t()) :: String.t()
+  def delete_all(table), do: "DELETE ALL FROM #{table}"
 
   @doc """
   Builds a `CREATE ... ON CONFLICT UPDATE` statement for idempotent upserts.

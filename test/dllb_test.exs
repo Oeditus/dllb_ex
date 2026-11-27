@@ -174,8 +174,20 @@ defmodule DllbTest do
                "COUNT ast_node WHERE language = 'elixir' GROUP BY kind"
     end
 
-    test "delete_where without clause deletes the whole table" do
-      assert Dllb.Query.delete_where("ast_node") == "DELETE ast_node"
+    test "delete_where without clause emits the explicit DELETE ALL FROM form" do
+      # dllb v1.2.0 rejects a bare `DELETE <table>`; the only filterless
+      # deletion is the explicit `DELETE ALL FROM <table>`.
+      assert Dllb.Query.delete_where("ast_node") == "DELETE ALL FROM ast_node"
+    end
+
+    test "delete_where treats a blank clause as filterless" do
+      assert Dllb.Query.delete_where("ast_node", "") == "DELETE ALL FROM ast_node"
+      assert Dllb.Query.delete_where("ast_node", "   ") == "DELETE ALL FROM ast_node"
+      assert Dllb.Query.delete_where("ast_node", nil) == "DELETE ALL FROM ast_node"
+    end
+
+    test "delete_all builds the explicit filterless form" do
+      assert Dllb.Query.delete_all("ast_node") == "DELETE ALL FROM ast_node"
     end
 
     test "delete_where appends WHERE" do
@@ -308,6 +320,19 @@ defmodule DllbTest do
     test "parses update status" do
       assert {:ok, %Dllb.Result.Update{matched: 3}} =
                Dllb.Result.parse(%{"status" => "update", "matched" => 3})
+    end
+
+    test "parses compacted status with reclaimed flag" do
+      assert {:ok, %Dllb.Result.Compacted{reclaimed: true}} =
+               Dllb.Result.parse(%{"status" => "compacted", "reclaimed" => true})
+
+      assert {:ok, %Dllb.Result.Compacted{reclaimed: false}} =
+               Dllb.Result.parse(%{"status" => "compacted", "reclaimed" => false})
+    end
+
+    test "rejects an unknown status" do
+      assert {:error, {:unknown_response, %{"status" => "nope"}}} =
+               Dllb.Result.parse(%{"status" => "nope"})
     end
 
     test "parses components status" do

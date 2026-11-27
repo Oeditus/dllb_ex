@@ -18,7 +18,7 @@ on data rather than sockets.
 - **Connection pooling**—NimblePool-managed TCP sockets with automatic reconnection on dead connections.
 - **Wire protocol**—Line-based text over TCP; supports JSON, toon, and CSV response formats.
 - **Query builder**—Composable functions for CREATE, SELECT (with `ORDER BY`), UPDATE, DELETE (point and `DELETE ... WHERE`), RELATE, COUNT (with `GROUP BY`), upsert (`ON CONFLICT UPDATE [SET ...]`), DEFINE TABLE/FIELD, DEFINE/REMOVE INDEX, full-text/vector/hybrid search, and graph analytics (COMMUNITIES, COMPONENTS, PAGERANK, CENTRALITY, PATH, EDGES) statements.
-- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `DeletedMany`, `Rows`, `Count`, `Update`, `Batch`, `Communities`, `Components`, `Error`) parsed from server responses.
+- **Result structs**—Typed structs (`Ok`, `Created`, `Deleted`, `DeletedMany`, `Rows`, `Count`, `Update`, `Batch`, `Compacted`, `Communities`, `Components`, `Error`) parsed from server responses.
 - **Secondary indexes**—Persisted single- and multi-field (composite) index definitions with optional `UNIQUE` constraints. Equality and range filters on indexed fields are transparently accelerated by the engine.
 - **Full-text & vector search**—`DEFINE FULLTEXT INDEX` (BM25/Tantivy) and `DEFINE VECTOR INDEX` (HNSW) creation, plus `SEARCH`, `VECTOR SEARCH`, and `HYBRID SEARCH` query builders with optional server-side `WHERE` scoping.
 - **MetaAST bridge**—Serialization between Metastatic AST 3-tuples and dllb documents/edges, including bulk tree ingestion and incremental (diff-based) re-indexing.
@@ -164,6 +164,13 @@ Dllb.Query.count("ast_node", group_by: "kind")
 Dllb.Query.delete_where("ast_node", "file_path = '/app/lib/old.ex'")
 # => "DELETE ast_node WHERE file_path = '/app/lib/old.ex'"
 
+# Filterless deletion must be spelled out: a bare `DELETE <table>` is a parse
+# error since dllb v1.2.0, so `delete_where/1` emits the explicit form.
+Dllb.Query.delete_where("ast_node")
+# => "DELETE ALL FROM ast_node"
+Dllb.Query.delete_all("ast_node")
+# => "DELETE ALL FROM ast_node"
+
 # Weighted PageRank over an edge table, top-N by score.
 Dllb.Query.graph_pagerank("calls", damping: 0.85, limit: 20)
 # => "GRAPH PAGERANK calls DAMPING 0.85 LIMIT 20"
@@ -179,6 +186,29 @@ Dllb.Query.graph_path("a", "b", "calls", max_depth: 6)
 # List edges with their stored weights (default 1.0).
 Dllb.Query.graph_edges("calls", where: "weight > 0.5")
 # => "GRAPH EDGES calls WHERE weight > 0.5"
+```
+
+> [!NOTE]
+> `GRAPH PATH` returns a single row with `found`, `length`, and `path`. When
+> no path exists `found` is `false` and both `length` and `path` are `null`
+> (dllb v1.2.0 replaced the old `-1` / `[]` sentinels), so branch on `found`
+> rather than testing `length` for a sentinel value.
+
+### Compaction
+
+```elixir
+# `reclaimed` reports whether space was actually freed. dllb v1.2.0 replaced
+# the bare `ok` reply with `{"status":"compacted","reclaimed":<bool>}`.
+{:ok, %Dllb.Result.Compacted{reclaimed: true}} = Dllb.compact()
+```
+
+### Batches
+
+```elixir
+# All statements run in one server-side transaction; a single %Batch{} comes back.
+# (The `{"status":"batch_started"}` acknowledgement dllb v1.2.0 sends for
+# `BEGIN BATCH` is consumed transparently.)
+{:ok, %Dllb.Result.Batch{count: 2, created: 2}} = Dllb.batch_transaction(queries)
 ```
 
 ### Upserts

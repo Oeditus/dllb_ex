@@ -49,6 +49,40 @@ defmodule Dllb.MetaASTTest do
     end
   end
 
+  describe "unwrap_value/1" do
+    test "passes plain JSON values through unchanged (dllb v1.2.0+)" do
+      assert MetaAST.unwrap_value("Alice") == "Alice"
+      assert MetaAST.unwrap_value(30) == 30
+      assert MetaAST.unwrap_value(1.5) == 1.5
+      assert MetaAST.unwrap_value(true) == true
+      assert MetaAST.unwrap_value(nil) == nil
+      assert MetaAST.unwrap_value([1, "a", nil]) == [1, "a", nil]
+    end
+
+    test "unwraps serde-tagged values from a pre-1.2.0 server" do
+      assert MetaAST.unwrap_value(%{"String" => "Alice"}) == "Alice"
+      assert MetaAST.unwrap_value(%{"Int" => 30}) == 30
+      assert MetaAST.unwrap_value(%{"Float" => 1.5}) == 1.5
+      assert MetaAST.unwrap_value(%{"Bool" => false}) == false
+      assert MetaAST.unwrap_value(%{"RecordId" => "user:u1"}) == "user:u1"
+    end
+
+    test "unwraps nested arrays, vectors, and objects recursively" do
+      assert MetaAST.unwrap_value(%{"Array" => [%{"Float" => 0.1}, %{"Int" => 2}]}) ==
+               [0.1, 2]
+
+      assert MetaAST.unwrap_value(%{"Vector" => [%{"Float" => 0.1}]}) == [0.1]
+
+      assert MetaAST.unwrap_value(%{
+               "Object" => %{"name" => %{"String" => "a"}, "n" => %{"Int" => 1}}
+             }) == %{"name" => "a", "n" => 1}
+    end
+
+    test "maps the Value::None sentinel to nil" do
+      assert MetaAST.unwrap_value("None") == nil
+    end
+  end
+
   describe "to_json_string/1" do
     test "serializes node_type, meta, and a nested child node" do
       node = {:function_call, [name: "bar"], [{:literal, [], 42}]}

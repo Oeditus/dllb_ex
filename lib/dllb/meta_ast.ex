@@ -186,10 +186,14 @@ defmodule Dllb.MetaAST do
 
   The `kind` field is converted back to an atom via `NodeTypes.from_dllb_kind/1`.
   Unknown kinds are kept as the original string in the `:kind` field.
+
+  Values are normalised through `unwrap_value/1`, so rows from a dllb v1.2.0+
+  server (plain JSON: `{"name" => "Alice"}`) and from an older server
+  (serde-tagged: `{"name" => %{"String" => "Alice"}}`) both parse.
   """
   @spec from_dllb_row(map()) :: map()
   def from_dllb_row(row) when is_map(row) do
-    kind_raw = unwrap_typed(get_field(row, "kind") || "")
+    kind_raw = unwrap_value(get_field(row, "kind") || "")
 
     kind =
       case NodeTypes.from_dllb_kind(kind_raw) do
@@ -198,31 +202,78 @@ defmodule Dllb.MetaAST do
       end
 
     %{
-      id: unwrap_typed(get_field(row, "id")),
+      id: unwrap_value(get_field(row, "id")),
       kind: kind,
-      name: unwrap_typed(get_field(row, "name")),
-      language: safe_to_atom(unwrap_typed(get_field(row, "language"))),
-      file_path: unwrap_typed(get_field(row, "file_path")),
-      module: unwrap_typed(get_field(row, "module")),
-      arity: unwrap_typed(get_field(row, "arity")),
-      visibility: safe_to_atom(unwrap_typed(get_field(row, "visibility"))),
-      project_path: unwrap_typed(get_field(row, "project_path")),
-      line_start: unwrap_typed(get_field(row, "line_start")),
-      line_end: unwrap_typed(get_field(row, "line_end")),
-      source_text: unwrap_typed(get_field(row, "source_text")),
-      signature: unwrap_typed(get_field(row, "signature")),
-      docstring: unwrap_typed(get_field(row, "docstring")),
-      source_embedding: get_field(row, "source_embedding"),
-      structure_embedding: get_field(row, "structure_embedding"),
-      docstring_embedding: get_field(row, "docstring_embedding"),
-      ast_serialized: unwrap_typed(get_field(row, "ast_serialized")),
-      similarity: unwrap_typed(get_field(row, "similarity")),
-      complexity: unwrap_typed(get_field(row, "complexity")),
-      ast_hash: unwrap_typed(get_field(row, "ast_hash")),
-      count: unwrap_typed(get_field(row, "count"))
+      name: unwrap_value(get_field(row, "name")),
+      language: safe_to_atom(unwrap_value(get_field(row, "language"))),
+      file_path: unwrap_value(get_field(row, "file_path")),
+      module: unwrap_value(get_field(row, "module")),
+      arity: unwrap_value(get_field(row, "arity")),
+      visibility: safe_to_atom(unwrap_value(get_field(row, "visibility"))),
+      project_path: unwrap_value(get_field(row, "project_path")),
+      line_start: unwrap_value(get_field(row, "line_start")),
+      line_end: unwrap_value(get_field(row, "line_end")),
+      source_text: unwrap_value(get_field(row, "source_text")),
+      signature: unwrap_value(get_field(row, "signature")),
+      docstring: unwrap_value(get_field(row, "docstring")),
+      source_embedding: unwrap_value(get_field(row, "source_embedding")),
+      structure_embedding: unwrap_value(get_field(row, "structure_embedding")),
+      docstring_embedding: unwrap_value(get_field(row, "docstring_embedding")),
+      ast_serialized: unwrap_value(get_field(row, "ast_serialized")),
+      similarity: unwrap_value(get_field(row, "similarity")),
+      complexity: unwrap_value(get_field(row, "complexity")),
+      ast_hash: unwrap_value(get_field(row, "ast_hash")),
+      count: unwrap_value(get_field(row, "count"))
     }
     |> reject_nil_values()
   end
+
+  @doc """
+  Normalises a single dllb `Value` into a plain Elixir term.
+
+  dllb has two wire encodings for `Value`:
+
+    * **dllb v1.2.0 and later** project rows into plain JSON, so a value
+      arrives already plain (`"Alice"`, `30`, `[0.1, 0.2]`, `nil`).
+    * **Older servers** serialise `Value`'s serde tagging verbatim, so the
+      same value arrives as `%{"String" => "Alice"}`, `%{"Int" => 30}`,
+      `%{"Array" => [...]}`, and `Value::None` as the bare string `"None"`.
+
+  This function accepts either shape, so callers do not need to know which
+  server they are talking to. Plain values pass through unchanged.
+
+  ## Examples
+
+      iex> Dllb.MetaAST.unwrap_value(%{"String" => "Alice"})
+      "Alice"
+
+      iex> Dllb.MetaAST.unwrap_value(%{"Int" => 30})
+      30
+
+      iex> Dllb.MetaAST.unwrap_value("Alice")
+      "Alice"
+
+      iex> Dllb.MetaAST.unwrap_value(nil)
+      nil
+
+  """
+  @spec unwrap_value(term()) :: term()
+  def unwrap_value(%{"String" => v}), do: v
+  def unwrap_value(%{"Int" => v}), do: v
+  def unwrap_value(%{"Float" => v}), do: v
+  def unwrap_value(%{"Bool" => v}), do: v
+  def unwrap_value(%{"RecordId" => v}), do: v
+  def unwrap_value(%{"Bytes" => v}) when is_binary(v), do: v
+  def unwrap_value(%{"Bytes" => v}) when is_list(v), do: :erlang.list_to_binary(v)
+  def unwrap_value(%{"Array" => v}) when is_list(v), do: Enum.map(v, &unwrap_value/1)
+  def unwrap_value(%{"Vector" => v}) when is_list(v), do: Enum.map(v, &unwrap_value/1)
+
+  def unwrap_value(%{"Object" => v}) when is_map(v) do
+    Map.new(v, fn {k, val} -> {k, unwrap_value(val)} end)
+  end
+
+  def unwrap_value("None"), do: nil
+  def unwrap_value(v), do: v
 
   @doc """
   Converts a dllb result row or MetaAST node map into a Ragex-compatible
@@ -622,12 +673,6 @@ defmodule Dllb.MetaAST do
   defp safe_to_atom(nil), do: nil
   defp safe_to_atom(str) when is_binary(str), do: String.to_atom(str)
 
-  # dllb JSON wraps typed values: %{"String" => "value"}, %{"Int" => 42}, etc.
-  defp unwrap_typed(%{"String" => v}), do: v
-  defp unwrap_typed(%{"Int" => v}), do: v
-  defp unwrap_typed(%{"Float" => v}), do: v
-  defp unwrap_typed(%{"Bool" => v}), do: v
-  defp unwrap_typed(v), do: v
   defp safe_to_string(v) when is_binary(v), do: v
   defp safe_to_string(v) when is_atom(v), do: Atom.to_string(v)
   defp safe_to_string(v) when is_number(v), do: to_string(v)

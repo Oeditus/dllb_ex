@@ -498,13 +498,19 @@ defmodule Dllb.MetaAST.Query do
   Executes the grouped stats query and returns
   `{:ok, %{total: n, by_kind: %{kind => count}}}`.
 
-  The grouped rows carry serde-tagged values (e.g. `%{"String" => "..."}`),
-  which are unwrapped here into plain kinds and integer counts.
+  Row values are normalised through `Dllb.MetaAST.unwrap_value/1`, so grouped
+  rows work against both a dllb v1.2.0+ server (plain JSON: `%{"kind" =>
+  "function_def", "count" => 5}`) and an older one (serde-tagged:
+  `%{"kind" => %{"String" => "function_def"}, "count" => %{"Int" => 5}}`).
   """
   @spec exec_stats(MetaAST.query_fn()) :: {:ok, map()} | {:error, term()}
   def exec_stats(query_fn) do
     with {:ok, rows} <- exec_rows(stats_query(), query_fn) do
-      by_kind = Map.new(rows, fn row -> {unwrap(row["kind"]), unwrap(row["count"])} end)
+      by_kind =
+        Map.new(rows, fn row ->
+          {MetaAST.unwrap_value(row["kind"]), MetaAST.unwrap_value(row["count"])}
+        end)
+
       total = by_kind |> Map.values() |> Enum.sum()
       {:ok, %{total: total, by_kind: by_kind}}
     end
@@ -656,13 +662,4 @@ defmodule Dllb.MetaAST.Query do
       filters -> Enum.join(filters, " AND ")
     end
   end
-
-  # dllb serde-tags Values by variant: %{"String" => v}, %{"Int" => n}, ...
-  # `Value::None` serializes to the bare string "None".
-  defp unwrap(%{"String" => v}), do: v
-  defp unwrap(%{"Int" => v}), do: v
-  defp unwrap(%{"Float" => v}), do: v
-  defp unwrap(%{"Bool" => v}), do: v
-  defp unwrap("None"), do: nil
-  defp unwrap(v), do: v
 end

@@ -9,7 +9,16 @@ defmodule Dllb.Result do
     * `Dllb.Result.Deleted` - record deleted, reports whether it existed
     * `Dllb.Result.DeletedMany` - `DELETE ... WHERE`, reports how many removed
     * `Dllb.Result.Rows` - query result with count and data rows
+    * `Dllb.Result.Compacted` - `COMPACT`, reports whether space was reclaimed
     * `Dllb.Result.Error` - server-side error with a message
+
+  ## Plain JSON payloads
+
+  Since dllb v1.2.0 rows are serialised as **plain** JSON: a row is
+  `{"name":"Alice","age":30}`, not the serde-tagged
+  `{"name":{"String":"Alice"},"age":{"Int":30}}` that older servers
+  emitted. `parse/1` passes row payloads through untouched, so consumers must
+  tolerate both shapes; `Dllb.MetaAST.unwrap_value/1` does exactly that.
   """
 
   defmodule Ok do
@@ -83,6 +92,19 @@ defmodule Dllb.Result do
     @type t :: %__MODULE__{count: non_neg_integer()}
   end
 
+  defmodule Compacted do
+    @moduledoc """
+    Represents the result of a `COMPACT` statement.
+
+    `reclaimed` is `true` when compaction actually freed space. Since dllb
+    v1.2.0 `COMPACT` no longer answers with a bare `{"status":"ok"}`: the
+    engine reports `{"status":"compacted","reclaimed":<bool>}` so callers can
+    tell a real reclaim from a no-op.
+    """
+    defstruct [:reclaimed]
+    @type t :: %__MODULE__{reclaimed: boolean()}
+  end
+
   defmodule Update do
     @moduledoc "Represents the result of an `UPDATE` statement (rows matched)."
     defstruct [:matched]
@@ -115,6 +137,7 @@ defmodule Dllb.Result do
           | Count.t()
           | Update.t()
           | Components.t()
+          | Compacted.t()
 
   @doc """
   Converts a decoded JSON map (from `Dllb.Protocol.decode/2`) into the
@@ -177,6 +200,10 @@ defmodule Dllb.Result do
         "nodes" => nodes
       }) do
     {:ok, %Components{component_count: component_count, largest: largest, nodes: nodes}}
+  end
+
+  def parse(%{"status" => "compacted", "reclaimed" => reclaimed}) do
+    {:ok, %Compacted{reclaimed: reclaimed}}
   end
 
   def parse(other) do

@@ -101,6 +101,10 @@ defmodule Dllb do
 
   @doc """
   Triggers database compaction on the dllb server to reclaim free space.
+
+  Returns `{:ok, %Dllb.Result.Compacted{reclaimed: boolean}}` on success, where
+  `reclaimed` reports whether space was actually freed (since dllb v1.2.0 a
+  `COMPACT` no longer answers with a bare `ok`).
   """
   @spec compact(Keyword.t()) :: {:ok, Dllb.Result.t()} | {:error, term()}
   def compact(opts \\ []) do
